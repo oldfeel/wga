@@ -1,0 +1,61 @@
+:root {
+  --bg: #12161c;
+  --card: #1b222c;
+  --text: #e7eef7;
+  --muted: #9aabbd;
+  --accent: #3d9b6e;
+  --accent-2: #2f6f9a;
+  --border: #2c3644;
+  --font: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  padding: 20px;
+  font-family: var(--font);
+  background:
+    radial-gradient(1200px 500px at 10% -10%, #1e3a2f 0%, transparent 55%),
+    radial-gradient(900px 400px at 100% 0%, #1a2a3d 0%, transparent 50%),
+    var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+header h1 { margin: 0 0 6px; font-size: 1.6rem; }
+.disclaimer { margin: 0 0 18px; color: var(--muted); font-size: 0.85rem; }
+.card {
+  background: color-mix(in srgb, var(--card) 92%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+.card h2 { margin: 0 0 12px; font-size: 1rem; }
+label { display: block; margin-bottom: 10px; font-size: 0.85rem; color: var(--muted); }
+input[type="text"], input[type="password"] {
+  width: 100%; margin-top: 4px; padding: 8px 10px; border-radius: 8px;
+  border: 1px solid var(--border); background: #0f1319; color: var(--text);
+}
+.check { display: flex; align-items: center; gap: 8px; color: var(--text); }
+.row { display: flex; gap: 8px; align-items: center; }
+.row input { flex: 1; }
+button {
+  margin-top: 4px; padding: 8px 14px; border: none; border-radius: 8px;
+  background: var(--accent); color: #fff; font-weight: 600; cursor: pointer;
+}
+button.secondary { background: var(--accent-2); }
+button:hover { filter: brightness(1.08); }
+.hidden { display: none !important; }
+.hint { color: var(--muted); font-size: 0.85rem; }
+code { background: #0f1319; padding: 1px 6px; border-radius: 4px; }
+#guildList button {
+  display: block; width: 100%; text-align: left; margin-top: 8px; background: #243041;
+}
+#guildList button.active { outline: 1px solid var(--accent); }
+#logList {
+  list-style: none; margin: 0; padding: 0; max-height: 220px; overflow: auto;
+  font-family: ui-monospace, Consolas, monospace; font-size: 0.78rem;
+}
+#logList li { padding: 6px 0; border-bottom: 1px solid var(--border); color: var(--muted); }
+#logList li.ok { color: #7dcea0; }
+#logList li.error { color: #e08a8a; }
+#logList li.warn { color: #e0c07a; }

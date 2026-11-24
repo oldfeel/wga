@@ -1,0 +1,44 @@
+# env & secrets
+.env
+.env.local
+*.pem
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Node
+node_modules/
+web/dist/
+web/.vite/
+*.log
+npm-debug.log*
+
+# Go
+server/bin/
+server/wga-server
+server/wga-server.exe
+*.exe
+*.test
+coverage.out
+
+# Tauri / Rust
+desktop/src-tauri/target/
+desktop/dist/
+
+# Snapshots / local data
+**/snapshots/
+*.lua.bak
+
+# Build
+dist/
+build/
+
+# Local tooling / temp
+scripts/tools/
+scripts/_*.ps1
+scripts/_*.txt
+desktop/src-tauri/icons/henry.png

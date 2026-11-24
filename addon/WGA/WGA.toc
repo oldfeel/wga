@@ -1,0 +1,12 @@
+## Interface: 16001, 11507
+## Title: WGA |cff33ff99Guild Assistant|r
+## Title-zhCN: WGA |cff33ff99公会助手|r
+## Notes: Local character snapshot for self-hosted guild tools. No network.
+## Notes-zhCN: 本地角色快照，供自托管公会助手使用（无网络请求）。
+## Author: 宜阳县树皮软件开发工作室
+## Version: 0.1.0
+## SavedVariables: WGADB
+## DefaultState: enabled
+
+WGA.lua
+Snapshot.lua
