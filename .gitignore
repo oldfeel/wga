@@ -46,4 +46,3 @@ scripts/_*.txt
 scripts/peek-sv-*.py
 desktop/src-tauri/icons/henry.png
 desktop/src-tauri/_casc_probe/
-history.md
