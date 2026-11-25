@@ -1,5 +1,6 @@
 mod api;
 mod config;
+mod icon_resolve;
 mod parse_sv;
 mod watch;
 
@@ -154,17 +155,34 @@ async fn login(
 }
 
 #[tauri::command]
+async fn get_captcha(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let cfg = state.cfg.lock().map_err(|e| e.to_string())?.clone();
+    state.api.captcha(&cfg).await
+}
+
+#[tauri::command]
 async fn register(
     app: AppHandle,
     state: State<'_, AppState>,
     username: String,
     password: String,
     display_name: String,
+    captcha_id: String,
+    captcha_code: String,
+    invite_code: String,
 ) -> Result<serde_json::Value, String> {
     let cfg = state.cfg.lock().map_err(|e| e.to_string())?.clone();
     let data = state
         .api
-        .register(&cfg, &username, &password, &display_name)
+        .register(
+            &cfg,
+            &username,
+            &password,
+            &display_name,
+            &captcha_id,
+            &captcha_code,
+            &invite_code,
+        )
         .await?;
     let token = data
         .pointer("/token")
@@ -175,6 +193,14 @@ async fn register(
         let mut c = state.cfg.lock().map_err(|e| e.to_string())?;
         c.token = token;
         c.username = username.clone();
+        if let Some(gid) = data.pointer("/guild/id").and_then(|v| v.as_str()) {
+            c.guild_id = gid.to_string();
+            c.guild_name = data
+                .pointer("/guild/name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+        }
         config::save(&c)?;
     }
     emit_log(&app, "ok", format!("已注册并登录 {username}"));
@@ -262,24 +288,84 @@ fn logout(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
-async fn upload_now(app: AppHandle, state: State<'_, AppState>) -> Result<serde_json::Value, String> {
-    let wow_root = state.cfg.lock().map_err(|e| e.to_string())?.wow_root.clone();
-    let mut files = config::list_wga_lua_files(&wow_root);
+fn latest_wga_lua(wow_root: &str) -> Result<PathBuf, String> {
+    let mut files = config::list_wga_lua_files(wow_root);
     if files.is_empty() {
-        emit_log(
-            &app,
-            "warn",
-            "未找到 WGA.lua，请先 /wga snapshot 并 /reload 或小退",
-        );
-        return Err("no WGA.lua".into());
+        return Err("未找到 WGA.lua，请先游戏内快照并 /reload 或小退".into());
     }
     files.sort_by_key(|p| {
         std::fs::metadata(p)
             .and_then(|m| m.modified())
             .ok()
     });
-    let path = files.pop().unwrap();
+    Ok(files.pop().unwrap())
+}
+
+#[tauri::command]
+fn get_local_snapshot(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let wow_root = state.cfg.lock().map_err(|e| e.to_string())?.wow_root.clone();
+    let path = latest_wga_lua(&wow_root)?;
+    let parsed = parse_sv::read_snapshot_from_lua(&path)?;
+    Ok(serde_json::json!({
+        "path": path.display().to_string(),
+        "hash": parsed.hash,
+        "payload": parsed.payload,
+    }))
+}
+
+/// 用物品 ID 向 Wowhead 解析图标文件名（桌面端绕过 CORS；无限新增物品可能没有）
+#[tauri::command]
+async fn resolve_item_icon(item_id: i64) -> Result<Option<String>, String> {
+    if item_id <= 0 {
+        return Ok(None);
+    }
+    let client = reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) WGA-Sync/0.1")
+        .timeout(std::time::Duration::from_millis(1800))
+        .connect_timeout(std::time::Duration::from_millis(800))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let url = format!("https://nether.wowhead.com/tooltip/item/{item_id}");
+    let resp = match client.get(&url).header("Accept", "application/json").send().await {
+        Ok(r) => r,
+        Err(_) => return Ok(None),
+    };
+    if !resp.status().is_success() {
+        return Ok(None);
+    }
+    let v: serde_json::Value = match resp.json().await {
+        Ok(j) => j,
+        Err(_) => return Ok(None),
+    };
+    if let Some(icon) = v.get("icon").and_then(|x| x.as_str()) {
+        let name = icon.to_ascii_lowercase();
+        if !name.is_empty() && !name.chars().all(|c| c.is_ascii_digit()) {
+            return Ok(Some(name));
+        }
+    }
+    Ok(None)
+}
+
+/// 混合解析：icon 名 / 物品对照表 / fileId→BLP→PNG 缓存
+#[tauri::command]
+async fn resolve_equip_icon(
+    icon: Option<String>,
+    icon_file_id: Option<u32>,
+    item_id: Option<i64>,
+) -> Result<Option<icon_resolve::IconSrc>, String> {
+    Ok(icon_resolve::resolve_equip_icon(icon, icon_file_id, item_id).await)
+}
+
+#[tauri::command]
+async fn upload_now(app: AppHandle, state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let wow_root = state.cfg.lock().map_err(|e| e.to_string())?.wow_root.clone();
+    let path = match latest_wga_lua(&wow_root) {
+        Ok(p) => p,
+        Err(e) => {
+            emit_log(&app, "warn", &e);
+            return Err(e);
+        }
+    };
     do_upload(&app, &state, path, true).await
 }
 
@@ -383,12 +469,16 @@ pub fn run() {
             get_config,
             save_settings,
             login,
+            get_captcha,
             register,
             me,
             create_guild,
             join_guild,
             select_guild,
             logout,
+            get_local_snapshot,
+            resolve_item_icon,
+            resolve_equip_icon,
             upload_now,
             upload_path,
             pick_wow_root

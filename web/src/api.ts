@@ -25,14 +25,31 @@ export const api = {
       "/auth/login",
       { method: "POST", body: JSON.stringify({ username, password }) }
     ),
-  register: (username: string, password: string, display_name?: string) =>
-    request<{ token: string; user: { id: string; username: string } }>(
-      "/auth/register",
-      {
-        method: "POST",
-        body: JSON.stringify({ username, password, display_name }),
-      }
-    ),
+  captcha: () =>
+    request<{ captcha_id: string; image: string }>("/auth/captcha"),
+  register: (
+    username: string,
+    password: string,
+    display_name?: string,
+    captcha_id?: string,
+    captcha_code?: string,
+    invite_code?: string
+  ) =>
+    request<{
+      token: string;
+      user: { id: string; username: string };
+      guild?: { id: string; name: string; role: string };
+    }>("/auth/register", {
+      method: "POST",
+      body: JSON.stringify({
+        username,
+        password,
+        display_name,
+        captcha_id,
+        captcha_code,
+        invite_code,
+      }),
+    }),
   me: (token: string) =>
     request<{
       user: { id: string; username: string };
@@ -136,15 +153,6 @@ export const api = {
         payload: unknown;
       };
     }>(`/guilds/${guildId}/characters/${charId}`, { token }),
-  characterSnapshots: (token: string, guildId: string, charId: string) =>
-    request<{
-      snapshots: Array<{
-        id: string;
-        captured_at: string;
-        addon_version?: string;
-        schema_version?: number;
-      }>;
-    }>(`/guilds/${guildId}/characters/${charId}/snapshots`, { token }),
   activities: (token: string, guildId: string) =>
     request<{
       activities: Array<{

@@ -34,7 +34,10 @@
 
 全位置（插件 TOC/加载提示、桌面端关于页、Web 页脚）使用统一免责声明，见 [disclaimer.md](disclaimer.md)。
 
-展示原则：仅文字 / 自有 UI；**不使用**暴雪官方美术资源。
+展示原则：自有 UI 布局；**仓库不内置**暴雪美术资源。装备图标混合解析：
+1. 插件导出 `icon`（文件名）与 `icon_file_id`（客户端 fileDataID）及 `item_id`
+2. 桌面端优先 CDN（`render.worldofwarcraft.com`）与本地物品对照表；否则按 `icon_file_id` 从社区 CASC 镜像拉 BLP→PNG，缓存到 `%AppData%/WGA/icons/`
+3. Web 侧用文件名 CDN + 物品对照表；不解 CASC（避免压垮 1C2G）
 
 ## 4. 目标游戏环境
 

@@ -2,13 +2,8 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
-
-type Equip = {
-  slot?: string;
-  name?: string;
-  item_level?: number;
-  item_id?: number;
-};
+import ArmoryEquip from "../components/ArmoryEquip";
+import type { EquipItem } from "../lib/armory";
 
 type Lockout = {
   instance_name?: string;
@@ -24,27 +19,34 @@ type Prof = {
   skill_max?: number;
 };
 
+type Quest = {
+  quest_id?: number;
+  title?: string;
+  level?: number;
+  is_complete?: boolean;
+  objectives?: Array<{
+    text?: string;
+    finished?: boolean;
+    num_fulfilled?: number;
+    num_required?: number;
+  }>;
+};
+
 export default function CharacterDetailPage() {
   const { charId } = useParams();
   const auth = useAuth();
   const [data, setData] = useState<Awaited<ReturnType<typeof api.character>> | null>(null);
-  const [history, setHistory] = useState<
-    Array<{ id: string; captured_at: string; addon_version?: string }>
-  >([]);
   const [err, setErr] = useState("");
   const [note, setNote] = useState("");
   const [msg, setMsg] = useState("");
 
   useEffect(() => {
     if (!auth.guildId || !charId) return;
-    Promise.all([
-      api.character(auth.token, auth.guildId, charId),
-      api.characterSnapshots(auth.token, auth.guildId, charId),
-    ])
-      .then(([c, s]) => {
+    api
+      .character(auth.token, auth.guildId, charId)
+      .then((c) => {
         setData(c);
         setNote(c.availability_note || "");
-        setHistory(s.snapshots || []);
       })
       .catch((e) => setErr(e.message || String(e)));
   }, [auth.token, auth.guildId, charId]);
@@ -79,9 +81,10 @@ export default function CharacterDetailPage() {
 
   const payload = data.latest_snapshot?.payload as
     | {
-        equipment?: Equip[];
+        equipment?: EquipItem[];
         lockouts?: Lockout[];
         professions?: Prof[];
+        quests?: Quest[];
         talents?: { loadout_string?: string };
       }
     | undefined;
@@ -91,18 +94,20 @@ export default function CharacterDetailPage() {
       <p>
         <Link to="/characters">← 角色列表</Link>
       </p>
-      <section className="card hero-card">
-        <div className="hero-main">
-          <h1>
-            {data.name}
-            <span className="muted"> - {data.realm}</span>
-          </h1>
-          <p className="hero-meta">
-            {[data.race, data.class, data.spec].filter(Boolean).join(" · ")}
-            {data.level != null ? ` · Lv${data.level}` : ""}
-            {data.item_level != null ? ` · ilvl ${data.item_level}` : ""}
-          </p>
-        </div>
+      <section className="card">
+        <h2>角色装备</h2>
+        <ArmoryEquip
+          equipment={payload?.equipment || []}
+          character={{
+            name: data.name,
+            realm: data.realm,
+            race: data.race,
+            class: data.class,
+            spec: data.spec,
+            level: data.level,
+            item_level: data.item_level,
+          }}
+        />
       </section>
 
       <section className="card">
@@ -116,20 +121,6 @@ export default function CharacterDetailPage() {
           <button type="submit">保存</button>
         </form>
         {msg && <p className="muted">{msg}</p>}
-      </section>
-
-      <section className="card">
-        <h2>装备</h2>
-        {!payload?.equipment?.length && <p className="muted">无装备数据</p>}
-        <ul className="equip-list">
-          {(payload?.equipment || []).map((e, i) => (
-            <li key={i}>
-              <span className="slot">{e.slot || "-"}</span>
-              <span>{e.name || e.item_id || "-"}</span>
-              <span className="muted">{e.item_level ?? ""}</span>
-            </li>
-          ))}
-        </ul>
       </section>
 
       <div className="two-col">
@@ -169,16 +160,39 @@ export default function CharacterDetailPage() {
       </div>
 
       <section className="card">
-        <h2>快照历史</h2>
+        <h2>当前任务</h2>
+        {!payload?.quests?.length && (
+          <p className="muted">无任务数据（需插件 0.1.1+ 重新快照）</p>
+        )}
         <ul className="list">
-          {history.map((s) => (
-            <li key={s.id} className="muted">
-              {new Date(s.captured_at).toLocaleString()}
-              {s.addon_version ? ` · addon ${s.addon_version}` : ""}
+          {(payload?.quests || []).map((q, i) => (
+            <li key={q.quest_id ?? i} className="announce-item">
+              <h3>
+                {q.title || `任务 ${q.quest_id ?? "?"}`}
+                {q.is_complete ? (
+                  <span className="muted"> · 已完成</span>
+                ) : null}
+              </h3>
+              <p className="muted" style={{ marginBottom: 4 }}>
+                {q.level != null ? `Lv${q.level}` : ""}
+                {q.quest_id != null ? ` · #${q.quest_id}` : ""}
+              </p>
+              {(q.objectives || []).length > 0 && (
+                <ul className="list">
+                  {(q.objectives || []).map((o, j) => (
+                    <li key={j} className="muted">
+                      {o.finished ? "✓ " : "· "}
+                      {o.text ||
+                        (o.num_required != null
+                          ? `${o.num_fulfilled ?? 0}/${o.num_required}`
+                          : "")}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </li>
           ))}
         </ul>
-        {history.length === 0 && <p className="muted">暂无历史</p>}
       </section>
     </div>
   );

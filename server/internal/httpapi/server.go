@@ -9,19 +9,21 @@ import (
 )
 
 type Server struct {
-	cfg    config.Config
-	pool   *pgxpool.Pool
-	tokens *auth.TokenService
+	cfg     config.Config
+	pool    *pgxpool.Pool
+	tokens  *auth.TokenService
+	captcha *captchaStore
 }
 
 func New(cfg config.Config, pool *pgxpool.Pool, tokens *auth.TokenService) *Server {
-	return &Server{cfg: cfg, pool: pool, tokens: tokens}
+	return &Server{cfg: cfg, pool: pool, tokens: tokens, captcha: newCaptchaStore()}
 }
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.handleHealth)
 
+	mux.HandleFunc("GET /api/v1/auth/captcha", s.handleCaptcha)
 	mux.HandleFunc("POST /api/v1/auth/register", s.handleRegister)
 	mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
 	mux.HandleFunc("GET /api/v1/auth/me", s.requireAuth(s.handleMe))
@@ -35,7 +37,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/guilds/{id}/characters", s.requireAuth(s.handleListCharacters))
 	mux.HandleFunc("GET /api/v1/guilds/{id}/characters/{charId}", s.requireAuth(s.handleGetCharacter))
 	mux.HandleFunc("PATCH /api/v1/guilds/{id}/characters/{charId}", s.requireAuth(s.handlePatchCharacter))
-	mux.HandleFunc("GET /api/v1/guilds/{id}/characters/{charId}/snapshots", s.requireAuth(s.handleListCharacterSnapshots))
 	mux.HandleFunc("POST /api/v1/guilds/{id}/snapshots", s.requireAuth(s.handleUploadSnapshot))
 	mux.HandleFunc("GET /api/v1/snapshots/{id}", s.requireAuth(s.handleGetSnapshot))
 

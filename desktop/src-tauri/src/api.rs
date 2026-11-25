@@ -66,12 +66,20 @@ impl Api {
         .await
     }
 
+    pub async fn captcha(&self, cfg: &AppConfig) -> Result<Value, String> {
+        self.request(cfg, reqwest::Method::GET, "/auth/captcha", None, false)
+            .await
+    }
+
     pub async fn register(
         &self,
         cfg: &AppConfig,
         username: &str,
         password: &str,
         display_name: &str,
+        captcha_id: &str,
+        captcha_code: &str,
+        invite_code: &str,
     ) -> Result<Value, String> {
         self.request(
             cfg,
@@ -80,7 +88,10 @@ impl Api {
             Some(&serde_json::json!({
                 "username": username,
                 "password": password,
-                "display_name": display_name
+                "display_name": display_name,
+                "captcha_id": captcha_id,
+                "captcha_code": captcha_code,
+                "invite_code": invite_code
             })),
             false,
         )

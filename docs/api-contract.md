@@ -13,7 +13,8 @@ Base URL：`http://localhost:8080/api/v1`（生产由 Nginx 反代 `/api/`）
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/auth/register` | `{ username, password, display_name? }` |
+| GET | `/auth/captcha` | `{ captcha_id, image }` 图形验证码（`image` 为 data URL PNG，5 分钟有效，不区分大小写） |
+| POST | `/auth/register` | `{ username, password, captcha_id, captcha_code, display_name?, invite_code? }`；邀请码可选，填写则自动加入公会 |
 | POST | `/auth/login` | `{ username, password }` → `{ token, user }` |
 | GET | `/auth/me` | 当前用户 + 所属公会列表 |
 
@@ -33,10 +34,9 @@ Base URL：`http://localhost:8080/api/v1`（生产由 Nginx 反代 `/api/`）
 | 方法 | 路径 | 权限 | 说明 |
 |------|------|------|------|
 | GET | `/guilds/{id}/characters` | 成员 | 筛选：`class`,`spec`,`min_ilvl`,`has_lockout`,`profession` |
-| GET | `/guilds/{id}/characters/{charId}` | 成员 | 档案 + 最近快照摘要 |
-| GET | `/guilds/{id}/characters/{charId}/snapshots` | 成员 | 历史列表 |
+| GET | `/guilds/{id}/characters/{charId}` | 成员 | 档案 + 最新快照 |
 | GET | `/snapshots/{id}` | 成员 | 完整 `payload` |
-| POST | `/guilds/{id}/snapshots` | 成员 | 桌面端上传；body = 快照 JSON v1；按 `(realm,name)` upsert `characters` |
+| POST | `/guilds/{id}/snapshots` | 成员 | 桌面端上传；按 `(realm,name)` upsert 角色；**每角色只保留最新一份** |
 
 ## 活动 / 报名 / 签到 / 排表
 

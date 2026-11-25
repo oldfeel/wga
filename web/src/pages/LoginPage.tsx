@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Navigate } from "react-router-dom";
+import { Link, Navigate } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
 
@@ -12,15 +12,12 @@ export default function LoginPage() {
 
   if (auth.token) return <Navigate to="/characters" replace />;
 
-  async function submit(e: FormEvent, mode: "login" | "register") {
+  async function submit(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
     setErr("");
     try {
-      const data =
-        mode === "login"
-          ? await api.login(username.trim(), password)
-          : await api.register(username.trim(), password, username.trim());
+      const data = await api.login(username.trim(), password);
       auth.setSession(data.token, data.user.username);
       const me = await api.me(data.token);
       auth.setGuilds(me.guilds || []);
@@ -34,8 +31,8 @@ export default function LoginPage() {
 
   return (
     <div className="auth-wrap">
-      <form className="card auth-card" onSubmit={(e) => submit(e, "login")}>
-        <h1>WGA</h1>
+      <form className="card auth-card" onSubmit={submit}>
+        <h1>登录</h1>
         <p className="muted">自托管公会助手</p>
         <label>
           用户名
@@ -62,14 +59,9 @@ export default function LoginPage() {
           <button type="submit" disabled={busy}>
             登录
           </button>
-          <button
-            type="button"
-            className="secondary"
-            disabled={busy}
-            onClick={(e) => submit(e, "register")}
-          >
-            注册
-          </button>
+          <Link to="/register" className="muted">
+            去注册
+          </Link>
         </div>
       </form>
     </div>

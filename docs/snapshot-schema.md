@@ -33,6 +33,14 @@
 1. 游戏内插件采集 → 写入 SavedVariables，并（若 API 允许）同步写出 JSON 到 `snapshot_dir`；若 Lua 无法写到 AppData，则由桌面端解析 `WGA.lua` 再生成 JSON。
 2. 桌面端 `fs.watch` / 轮询 `snapshot_dir`；`auto_upload=true` 时变更即上传，否则仅手动。
 
+插件自动保存（v0.1.4+，防卡顿）：
+
+- **有变化才写**：装备 / 任务 / 幻化 / 专业 / CD 等事件标记 dirty，内容指纹未变则跳过
+- **合并抖动**：变化后延迟约 **2 分钟**再写入（`/wga auto N` 可调），避免任务进度连跳狂写
+- **战斗中跳过**自动写；脱战后补写
+- 本地与服务端均**只保留最新一份**，不做历史归档
+- `/wga auto` 查看；`on|off`；`/wga auto 2` 设延迟分钟数
+
 ## JSON 示例
 
 ```json
@@ -57,7 +65,20 @@
       "name": "示例头盔",
       "item_level": 639,
       "enchant_id": null,
-      "gems": []
+      "gems": [],
+      "quality": 4,
+      "icon": "inv_helmet_01",
+      "icon_file_id": null,
+      "desc": "板甲 · 头部 · 拾取后绑定",
+      "transmog": {
+        "source_id": 1001,
+        "appearance_id": 2002,
+        "name": "示例外观",
+        "is_transmogrified": true,
+        "is_hidden": false,
+        "illusion_id": null,
+        "illusion_name": null
+      }
     }
   ],
   "talents": {
@@ -82,6 +103,18 @@
       "recipes": [{ "spell_id": 1, "name": "示例配方" }]
     }
   ],
+  "quests": [
+    {
+      "quest_id": 12345,
+      "title": "示例任务",
+      "level": 80,
+      "is_complete": false,
+      "frequency": null,
+      "objectives": [
+        { "text": "击败 0/5", "finished": false, "num_fulfilled": 0, "num_required": 5 }
+      ]
+    }
+  ],
   "availability_note": null
 }
 ```
@@ -94,10 +127,11 @@
 | `addon_version` | 是 | 插件版本 |
 | `captured_at` | 是 | ISO-8601 |
 | `character.*` | 是 | 角色主键逻辑为 `(realm, name)` |
-| `equipment` | 是 | 可空数组 |
+| `equipment` | 是 | 全槽位数组（空槽 `name` 为空）；含 `quality`/`icon`/`icon_file_id`/`desc`/`transmog` |
 | `talents` | 是 | 可无串 |
 | `lockouts` | 是 | 副本 CD |
 | `professions` | 是 | 专业与配方；配方可截断过大列表 |
+| `quests` | 否 | 当前任务日志（非全图世界任务）；快照时采集 |
 | `client_version` | 否 | 客户端版本字符串 |
 | `availability_note` | 否 | 玩家自填可上线说明（可后期由 Web 维护） |
 

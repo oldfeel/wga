@@ -99,6 +99,11 @@ func (s *Server) handleUploadSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 每角色只保留最新一份快照（不做历史归档）
+	if _, err := tx.Exec(r.Context(), `DELETE FROM snapshots WHERE character_id = $1`, charID); err != nil {
+		writeError(w, http.StatusInternalServerError, "server_error", err.Error())
+		return
+	}
 	var snapID uuid.UUID
 	err = tx.QueryRow(r.Context(), `
 		INSERT INTO snapshots (character_id, guild_id, uploaded_by, schema_version, addon_version, captured_at, payload)
@@ -305,61 +310,6 @@ func (s *Server) handleGetCharacter(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
-}
-
-func (s *Server) handleListCharacterSnapshots(w http.ResponseWriter, r *http.Request) {
-	gid, err := uuid.Parse(r.PathValue("id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "validation_error", "bad guild id")
-		return
-	}
-	cid, err := uuid.Parse(r.PathValue("charId"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "validation_error", "bad character id")
-		return
-	}
-	if _, ok := s.memberRole(r, gid, userIDFrom(r.Context())); !ok {
-		writeError(w, http.StatusForbidden, "forbidden", "not a guild member")
-		return
-	}
-	var exists bool
-	_ = s.pool.QueryRow(r.Context(),
-		`SELECT EXISTS(SELECT 1 FROM characters WHERE id=$1 AND guild_id=$2)`, cid, gid,
-	).Scan(&exists)
-	if !exists {
-		writeError(w, http.StatusNotFound, "not_found", "character not found")
-		return
-	}
-
-	rows, err := s.pool.Query(r.Context(), `
-		SELECT id, captured_at, addon_version, schema_version
-		FROM snapshots WHERE character_id = $1
-		ORDER BY captured_at DESC LIMIT 50`, cid)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "server_error", err.Error())
-		return
-	}
-	defer rows.Close()
-	list := []map[string]any{}
-	for rows.Next() {
-		var (
-			id, addon string
-			captured  time.Time
-			schema    int
-			addonPtr  *string
-		)
-		if err := rows.Scan(&id, &captured, &addonPtr, &schema); err != nil {
-			writeError(w, http.StatusInternalServerError, "server_error", err.Error())
-			return
-		}
-		if addonPtr != nil {
-			addon = *addonPtr
-		}
-		list = append(list, map[string]any{
-			"id": id, "captured_at": captured, "addon_version": addon, "schema_version": schema,
-		})
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"snapshots": list})
 }
 
 func (s *Server) handleGetSnapshot(w http.ResponseWriter, r *http.Request) {
