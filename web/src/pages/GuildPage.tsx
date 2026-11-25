@@ -10,15 +10,28 @@ type Member = {
   joined_at: string;
 };
 
+type Announcement = {
+  id: string;
+  title: string;
+  body: string;
+  author?: string;
+  created_at: string;
+};
+
 export default function GuildPage() {
   const auth = useAuth();
   const [name, setName] = useState("");
   const [invite, setInvite] = useState("");
   const [msg, setMsg] = useState("");
   const [members, setMembers] = useState<Member[]>([]);
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [annTitle, setAnnTitle] = useState("");
+  const [annBody, setAnnBody] = useState("");
 
   const current = auth.guilds.find((g) => g.id === auth.guildId);
   const isOwner = current?.role === "owner";
+  const canPost =
+    current?.role === "owner" || current?.role === "officer";
 
   async function refresh() {
     const me = await api.me(auth.token);
@@ -26,10 +39,15 @@ export default function GuildPage() {
     const gid = auth.guildId || me.guilds?.[0]?.id;
     if (gid) {
       if (!auth.guildId) auth.setGuildId(gid);
-      const m = await api.members(auth.token, gid);
+      const [m, a] = await Promise.all([
+        api.members(auth.token, gid),
+        api.announcements(auth.token, gid),
+      ]);
       setMembers(m.members || []);
+      setAnnouncements(a.announcements || []);
     } else {
       setMembers([]);
+      setAnnouncements([]);
     }
   }
 
@@ -101,6 +119,66 @@ export default function GuildPage() {
           ))}
         </ul>
       </section>
+
+      {auth.guildId && (
+        <section className="card">
+          <h2>公告</h2>
+          {canPost && (
+            <form
+              className="stack-form"
+              style={{ maxWidth: "100%", marginBottom: 12 }}
+              onSubmit={async (e) => {
+                e.preventDefault();
+                try {
+                  await api.createAnnouncement(auth.token, auth.guildId, {
+                    title: annTitle.trim(),
+                    body: annBody.trim(),
+                  });
+                  setAnnTitle("");
+                  setAnnBody("");
+                  setMsg("公告已发布");
+                  await refresh();
+                } catch (ex) {
+                  setMsg(ex instanceof Error ? ex.message : String(ex));
+                }
+              }}
+            >
+              <label>
+                标题
+                <input
+                  value={annTitle}
+                  onChange={(e) => setAnnTitle(e.target.value)}
+                  required
+                />
+              </label>
+              <label>
+                正文
+                <textarea
+                  value={annBody}
+                  onChange={(e) => setAnnBody(e.target.value)}
+                  required
+                />
+              </label>
+              <button type="submit">发布公告</button>
+            </form>
+          )}
+          {announcements.length === 0 && (
+            <p className="muted">暂无公告</p>
+          )}
+          <div>
+            {announcements.map((a) => (
+              <article key={a.id} className="announce-item">
+                <h3>{a.title}</h3>
+                <p className="muted" style={{ marginBottom: 6 }}>
+                  {a.author || "未知"} ·{" "}
+                  {new Date(a.created_at).toLocaleString()}
+                </p>
+                <p>{a.body}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
 
       {auth.guildId && (
         <section className="card">

@@ -98,3 +98,13 @@ select {
   padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border);
   background: #0e1319; color: var(--text);
 }
+textarea {
+  width: 100%; margin-top: 4px; padding: 8px 10px; border-radius: 8px;
+  border: 1px solid var(--border); background: #0e1319; color: var(--text);
+  font: inherit; resize: vertical; min-height: 80px;
+}
+.announce-item {
+  padding: 12px 0; border-bottom: 1px solid var(--border);
+}
+.announce-item h3 { margin: 0 0 6px; font-size: 1rem; }
+.announce-item p { margin: 0; white-space: pre-wrap; line-height: 1.45; }

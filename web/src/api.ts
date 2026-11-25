@@ -206,4 +206,24 @@ export const api = {
       token,
       body: JSON.stringify({ roster }),
     }),
+  announcements: (token: string, guildId: string) =>
+    request<{
+      announcements: Array<{
+        id: string;
+        title: string;
+        body: string;
+        author?: string;
+        created_at: string;
+      }>;
+    }>(`/guilds/${guildId}/announcements`, { token }),
+  createAnnouncement: (
+    token: string,
+    guildId: string,
+    body: { title: string; body: string }
+  ) =>
+    request<{ id: string }>(`/guilds/${guildId}/announcements`, {
+      method: "POST",
+      token,
+      body: JSON.stringify(body),
+    }),
 };

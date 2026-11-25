@@ -47,5 +47,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/activities/{id}/check-in", s.requireAuth(s.handleCheckIn))
 	mux.HandleFunc("PUT /api/v1/activities/{id}/roster", s.requireAuth(s.handlePutRoster))
 
+	mux.HandleFunc("GET /api/v1/guilds/{id}/announcements", s.requireAuth(s.handleListAnnouncements))
+	mux.HandleFunc("POST /api/v1/guilds/{id}/announcements", s.requireAuth(s.handleCreateAnnouncement))
+
 	return withCORS(s.cfg.CORSOrigin, mux)
 }

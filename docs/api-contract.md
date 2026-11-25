@@ -51,11 +51,12 @@ Base URL：`http://localhost:8080/api/v1`（生产由 Nginx 反代 `/api/`）
 | POST | `/activities/{id}/check-in` | 本人或 officer+ | `{ user_id? }` 快捷签到 |
 | PUT | `/activities/{id}/roster` | officer+ | 整表覆盖排表 `[{ character_id, user_id?, group_name?, slot_role?, sort_order, note? }]` |
 
-## 公告（表已建，Web 可二期）
+## 公告
 
-| 方法 | 路径 | 权限 |
-|------|------|------|
-| GET/POST | `/guilds/{id}/announcements` | 读：成员；写：officer+ |
+| 方法 | 路径 | 权限 | 说明 |
+|------|------|------|------|
+| GET | `/guilds/{id}/announcements` | 成员 | 列表（新→旧） |
+| POST | `/guilds/{id}/announcements` | officer+ | `{ title, body }` |
 
 ## 错误码（初稿）
 
