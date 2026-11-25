@@ -58,6 +58,15 @@
     "level": 80,
     "item_level": 636.5
   },
+  "guild": {
+    "name": "示例公会",
+    "rank": "会长",
+    "rank_index": 0,
+    "is_leader": true,
+    "flavor": "forever",
+    "region_key": "PVP",
+    "realm_name": "示例服务器"
+  },
   "equipment": [
     {
       "slot": "HEAD",
@@ -81,9 +90,50 @@
       }
     }
   ],
+  "equipment_sets": [
+    {
+      "id": 1,
+      "name": "防御",
+      "is_equipped": true,
+      "items": [{ "slot": "HEAD", "item_id": 12345, "name": "示例头盔" }]
+    }
+  ],
   "talents": {
     "loadout_string": "",
-    "spec_id": null
+    "spec_id": null,
+    "groups": [
+      {
+        "index": 1,
+        "name": "主天赋",
+        "active": true,
+        "tabs": [
+          {
+            "group_id": 11650,
+            "name": "Arms",
+            "points_spent": 51,
+            "nodes": [
+              {
+                "node_id": 1,
+                "pos_x": 1000,
+                "pos_y": 2000,
+                "rank": 5,
+                "max_rank": 5,
+                "name": "示例天赋",
+                "spell_id": 20154,
+                "icon_file_id": 132223,
+                "tooltip_lines": [
+                  { "left": "示例天赋", "color": { "r": 255, "g": 210, "b": 0 } },
+                  { "left": "使某某效果提高。" }
+                ]
+              }
+            ]
+          }
+        ],
+        "trees": [{ "tree_id": 1117, "points_spent": 51 }],
+        "nodes": []
+      },
+      { "index": 2, "name": "副天赋", "active": false, "tabs": [], "nodes": [] }
+    ]
   },
   "lockouts": [
     {
@@ -127,8 +177,11 @@
 | `addon_version` | 是 | 插件版本 |
 | `captured_at` | 是 | ISO-8601 |
 | `character.*` | 是 | 角色主键逻辑为 `(realm, name)` |
+| `guild` | 否 | 未入会为 `null`；含 `name`/`is_leader`/`flavor`/`region_key`/`realm_name` |
 | `equipment` | 是 | 全槽位数组（空槽 `name` 为空）；含 `quality`/`icon`/`icon_file_id`/`desc`/`transmog` |
-| `talents` | 是 | 可无串 |
+| `equipment_sets` | 否 | 装备配置方案（`C_EquipmentSet`，数量不限）；桌面端每个方案一个 tab |
+| `talents` | 是 | 可空串；`groups` 为双天赋（最多 2） |
+| `talents.groups` | 否 | 每组一个 tab；当前组含已点节点 |
 | `lockouts` | 是 | 副本 CD |
 | `professions` | 是 | 专业与配方；配方可截断过大列表 |
 | `quests` | 否 | 当前任务日志（非全图世界任务）；快照时采集 |

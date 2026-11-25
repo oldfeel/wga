@@ -15,7 +15,6 @@ type registerReq struct {
 	DisplayName string `json:"display_name"`
 	CaptchaID   string `json:"captcha_id"`
 	CaptchaCode string `json:"captcha_code"`
-	InviteCode  string `json:"invite_code"`
 }
 
 type loginReq struct {
@@ -32,7 +31,6 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	req.Username = strings.TrimSpace(req.Username)
 	req.CaptchaID = strings.TrimSpace(req.CaptchaID)
 	req.CaptchaCode = strings.TrimSpace(req.CaptchaCode)
-	req.InviteCode = strings.TrimSpace(req.InviteCode)
 	if len(req.Username) < 3 || len(req.Password) < 6 {
 		writeError(w, http.StatusBadRequest, "validation_error", "username >= 3 and password >= 6 required")
 		return
@@ -40,18 +38,6 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	if req.CaptchaID == "" || req.CaptchaCode == "" || !s.captcha.verify(req.CaptchaID, req.CaptchaCode) {
 		writeError(w, http.StatusBadRequest, "validation_error", "invalid captcha")
 		return
-	}
-
-	var inviteGuildID uuid.UUID
-	var inviteGuildName string
-	if req.InviteCode != "" {
-		err := s.pool.QueryRow(r.Context(),
-			`SELECT id, name FROM guilds WHERE invite_code = $1`, req.InviteCode,
-		).Scan(&inviteGuildID, &inviteGuildName)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "validation_error", "invalid invite_code")
-			return
-		}
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
@@ -73,18 +59,12 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var joinedGuild map[string]any
-	if req.InviteCode != "" {
-		_, err = s.pool.Exec(r.Context(),
-			`INSERT INTO guild_members (guild_id, user_id, role) VALUES ($1, $2, 'member')
-			 ON CONFLICT (guild_id, user_id) DO NOTHING`,
-			inviteGuildID, id,
-		)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "server_error", err.Error())
-			return
+	// seed admin if username is in ADMIN_USERNAMES
+	for _, a := range s.cfg.AdminUsernames {
+		if strings.EqualFold(a, req.Username) {
+			_, _ = s.pool.Exec(r.Context(), `UPDATE users SET is_admin = true WHERE id = $1`, id)
+			break
 		}
-		joinedGuild = map[string]any{"id": inviteGuildID, "name": inviteGuildName, "role": "member"}
 	}
 
 	token, err := s.tokens.Issue(id, req.Username)
@@ -92,18 +72,15 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "server_error", "token failed")
 		return
 	}
-	out := map[string]any{
+	writeJSON(w, http.StatusCreated, map[string]any{
 		"token": token,
 		"user": map[string]any{
 			"id":           id,
 			"username":     req.Username,
 			"display_name": req.DisplayName,
+			"is_admin":     s.isAdmin(r, id),
 		},
-	}
-	if joinedGuild != nil {
-		out["guild"] = joinedGuild
-	}
-	writeJSON(w, http.StatusCreated, out)
+	})
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -113,14 +90,15 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var (
-		id   uuid.UUID
-		hash string
-		name *string
+		id      uuid.UUID
+		hash    string
+		name    *string
+		isAdmin bool
 	)
 	err := s.pool.QueryRow(r.Context(),
-		`SELECT id, password_hash, display_name FROM users WHERE username = $1`,
+		`SELECT id, password_hash, display_name, COALESCE(is_admin, false) FROM users WHERE username = $1`,
 		strings.TrimSpace(req.Username),
-	).Scan(&id, &hash, &name)
+	).Scan(&id, &hash, &name, &isAdmin)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "invalid credentials")
 		return
@@ -128,6 +106,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)) != nil {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "invalid credentials")
 		return
+	}
+	// refresh admin flag from env list
+	for _, a := range s.cfg.AdminUsernames {
+		if strings.EqualFold(a, req.Username) && !isAdmin {
+			_, _ = s.pool.Exec(r.Context(), `UPDATE users SET is_admin = true WHERE id = $1`, id)
+			isAdmin = true
+			break
+		}
 	}
 	token, err := s.tokens.Issue(id, req.Username)
 	if err != nil {
@@ -144,16 +130,29 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			"id":           id,
 			"username":     req.Username,
 			"display_name": dn,
+			"is_admin":     isAdmin,
 		},
 	})
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	uid := userIDFrom(r.Context())
+	var isAdmin bool
+	_ = s.pool.QueryRow(r.Context(), `SELECT COALESCE(is_admin, false) FROM users WHERE id = $1`, uid).Scan(&isAdmin)
+	for _, a := range s.cfg.AdminUsernames {
+		if strings.EqualFold(a, usernameFrom(r.Context())) && !isAdmin {
+			_, _ = s.pool.Exec(r.Context(), `UPDATE users SET is_admin = true WHERE id = $1`, uid)
+			isAdmin = true
+			break
+		}
+	}
+
 	rows, err := s.pool.Query(r.Context(), `
-		SELECT g.id, g.name, g.invite_code, gm.role, gm.joined_at
+		SELECT g.id, g.name, g.verification_status::text, gm.role::text, gm.joined_at,
+		       s.flavor, s.region_key, s.realm_name
 		FROM guild_members gm
 		JOIN guilds g ON g.id = gm.guild_id
+		JOIN servers s ON s.id = g.server_id
 		WHERE gm.user_id = $1
 		ORDER BY gm.joined_at`, uid)
 	if err != nil {
@@ -165,25 +164,29 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	guilds := []map[string]any{}
 	for rows.Next() {
 		var (
-			gid, name, invite, role string
-			joined                  time.Time
+			gid, name, vstatus, role, flavor, region, realm string
+			joined                                          time.Time
 		)
-		if err := rows.Scan(&gid, &name, &invite, &role, &joined); err != nil {
+		if err := rows.Scan(&gid, &name, &vstatus, &role, &joined, &flavor, &region, &realm); err != nil {
 			writeError(w, http.StatusInternalServerError, "server_error", err.Error())
 			return
 		}
 		guilds = append(guilds, map[string]any{
-			"id":          gid,
-			"name":        name,
-			"invite_code": invite,
-			"role":        role,
-			"joined_at":   joined,
+			"id":                  gid,
+			"name":                name,
+			"verification_status": vstatus,
+			"role":                role,
+			"joined_at":           joined,
+			"flavor":              flavor,
+			"region_key":          region,
+			"realm_name":          realm,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"user": map[string]any{
 			"id":       uid,
 			"username": usernameFrom(r.Context()),
+			"is_admin": isAdmin,
 		},
 		"guilds": guilds,
 	})

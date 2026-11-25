@@ -10,16 +10,20 @@
 | 项 | 决定 |
 |----|------|
 | 账号体系 | 本地账号（用户名 + 密码）；不做 Discord / Battle.net OAuth（MVP） |
-| 进公会 | 邀请码加入；会长可重置邀请码 |
-| 角色 | `owner`（会长）/ `officer`（官员）/ `member`（成员） |
+| 进公会 | 按 `(flavor, region_key, realm_name, guild_name)` 查库：无则创建（待认证）、有则申请加入（会长/官员审）；游戏会长可认领（平台管理员审） |
+| 服务器层级 | 一级 flavor（forever/retail/classic）；二级 region_key（无限服用 PVP/PVE，未知 UNKNOWN）；三级 realm_name |
+| 认证 | 创建后 `pending`；平台管理员认证后显示「已认证」；认领通过默认同时认证 |
+| 角色 | `owner`（会长）/ `officer`（官员）/ `member`（成员）；另有平台 `is_admin`（`ADMIN_USERNAMES`） |
 | 一人多公会 | **允许**；请求需带当前 `guild_id` 上下文 |
 | Token | Bearer JWT；桌面端与 Web 共用同一套登录 |
+| 邀请码 | 主流程停用；库字段可保留但不对外暴露 |
 
 ## 2. 数据边界（MVP 快照白名单）
 
 第一期入库字段：
 
 - 角色基础信息（名、服务器、种族、职业、专精、等级、装等）
+- 公会信息（名、是否会长、flavor / region_key / realm_name）
 - 装备列表
 - 天赋串
 - 副本 / 团本 CD

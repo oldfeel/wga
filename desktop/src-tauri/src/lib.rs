@@ -1,4 +1,5 @@
 mod api;
+mod casc_local;
 mod config;
 mod icon_resolve;
 mod parse_sv;
@@ -119,6 +120,7 @@ fn save_settings(
     let root = c.wow_root.clone();
     drop(c);
     if root_changed {
+        casc_local::reset();
         watch::spawn_watcher(app.clone(), root);
     }
     emit_log(&app, "info", "设置已保存");
@@ -169,7 +171,6 @@ async fn register(
     display_name: String,
     captcha_id: String,
     captcha_code: String,
-    invite_code: String,
 ) -> Result<serde_json::Value, String> {
     let cfg = state.cfg.lock().map_err(|e| e.to_string())?.clone();
     let data = state
@@ -181,7 +182,6 @@ async fn register(
             &display_name,
             &captcha_id,
             &captcha_code,
-            &invite_code,
         )
         .await?;
     let token = data
@@ -193,14 +193,6 @@ async fn register(
         let mut c = state.cfg.lock().map_err(|e| e.to_string())?;
         c.token = token;
         c.username = username.clone();
-        if let Some(gid) = data.pointer("/guild/id").and_then(|v| v.as_str()) {
-            c.guild_id = gid.to_string();
-            c.guild_name = data
-                .pointer("/guild/name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-        }
         config::save(&c)?;
     }
     emit_log(&app, "ok", format!("已注册并登录 {username}"));
@@ -214,50 +206,157 @@ async fn me(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
+async fn lookup_guild(
+    state: State<'_, AppState>,
+    flavor: String,
+    region_key: String,
+    realm_name: String,
+    guild_name: String,
+) -> Result<serde_json::Value, String> {
+    let cfg = state.cfg.lock().map_err(|e| e.to_string())?.clone();
+    state
+        .api
+        .lookup_guild(&cfg, &flavor, &region_key, &realm_name, &guild_name)
+        .await
+}
+
+#[tauri::command]
 async fn create_guild(
     app: AppHandle,
     state: State<'_, AppState>,
     name: String,
+    flavor: String,
+    region_key: String,
+    realm_name: String,
 ) -> Result<serde_json::Value, String> {
     let cfg = state.cfg.lock().map_err(|e| e.to_string())?.clone();
-    let g = state.api.create_guild(&cfg, &name).await?;
+    let g = state
+        .api
+        .create_guild(&cfg, &name, &flavor, &region_key, &realm_name)
+        .await?;
     let id = g.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let gname = g
         .get("name")
         .and_then(|v| v.as_str())
         .unwrap_or(&name)
         .to_string();
-    let invite = g
-        .get("invite_code")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
     {
         let mut c = state.cfg.lock().map_err(|e| e.to_string())?;
         c.guild_id = id;
         c.guild_name = gname.clone();
         config::save(&c)?;
     }
-    emit_log(&app, "ok", format!("已创建公会 {gname}，邀请码 {invite}"));
+    emit_log(&app, "ok", format!("已创建公会 {gname}（待认证）"));
     Ok(g)
 }
 
 #[tauri::command]
-async fn join_guild(
+async fn apply_join_guild(
     app: AppHandle,
     state: State<'_, AppState>,
-    invite_code: String,
+    guild_id: String,
+    message: String,
 ) -> Result<serde_json::Value, String> {
     let cfg = state.cfg.lock().map_err(|e| e.to_string())?.clone();
-    let g = state.api.join_guild(&cfg, &invite_code).await?;
-    let id = g.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let gname = g.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    {
-        let mut c = state.cfg.lock().map_err(|e| e.to_string())?;
-        c.guild_id = id;
-        c.guild_name = gname.clone();
-        config::save(&c)?;
-    }
-    emit_log(&app, "ok", format!("已加入公会 {gname}"));
+    let g = state.api.apply_join_guild(&cfg, &guild_id, &message).await?;
+    emit_log(&app, "ok", "已提交入会申请，等待会长审核");
+    Ok(g)
+}
+
+#[tauri::command]
+async fn apply_claim_guild(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    guild_id: String,
+    character_name: String,
+    realm_name: String,
+    is_leader: bool,
+    message: String,
+) -> Result<serde_json::Value, String> {
+    let cfg = state.cfg.lock().map_err(|e| e.to_string())?.clone();
+    let g = state
+        .api
+        .apply_claim_guild(
+            &cfg,
+            &guild_id,
+            &character_name,
+            &realm_name,
+            is_leader,
+            &message,
+        )
+        .await?;
+    emit_log(&app, "ok", "已提交认领申请，等待管理员审核");
+    Ok(g)
+}
+
+#[tauri::command]
+async fn list_join_applications(
+    state: State<'_, AppState>,
+    guild_id: String,
+) -> Result<serde_json::Value, String> {
+    let cfg = state.cfg.lock().map_err(|e| e.to_string())?.clone();
+    state.api.list_join_applications(&cfg, &guild_id).await
+}
+
+#[tauri::command]
+async fn decide_join_application(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    guild_id: String,
+    app_id: String,
+    decision: String,
+) -> Result<serde_json::Value, String> {
+    let cfg = state.cfg.lock().map_err(|e| e.to_string())?.clone();
+    let g = state
+        .api
+        .decide_join_application(&cfg, &guild_id, &app_id, &decision)
+        .await?;
+    emit_log(&app, "ok", format!("入会申请已{decision}"));
+    Ok(g)
+}
+
+#[tauri::command]
+async fn admin_list_guilds(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let cfg = state.cfg.lock().map_err(|e| e.to_string())?.clone();
+    state.api.admin_list_guilds(&cfg).await
+}
+
+#[tauri::command]
+async fn admin_verify_guild(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    guild_id: String,
+    decision: String,
+    region_key: String,
+) -> Result<serde_json::Value, String> {
+    let cfg = state.cfg.lock().map_err(|e| e.to_string())?.clone();
+    let g = state
+        .api
+        .admin_verify_guild(&cfg, &guild_id, &decision, &region_key)
+        .await?;
+    emit_log(&app, "ok", format!("公会认证 {decision}"));
+    Ok(g)
+}
+
+#[tauri::command]
+async fn admin_list_claims(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let cfg = state.cfg.lock().map_err(|e| e.to_string())?.clone();
+    state.api.admin_list_claims(&cfg).await
+}
+
+#[tauri::command]
+async fn admin_decide_claim(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    app_id: String,
+    decision: String,
+) -> Result<serde_json::Value, String> {
+    let cfg = state.cfg.lock().map_err(|e| e.to_string())?.clone();
+    let g = state
+        .api
+        .admin_decide_claim(&cfg, &app_id, &decision)
+        .await?;
+    emit_log(&app, "ok", format!("认领申请已{decision}"));
     Ok(g)
 }
 
@@ -304,8 +403,38 @@ fn latest_wga_lua(wow_root: &str) -> Result<PathBuf, String> {
 #[tauri::command]
 fn get_local_snapshot(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
     let wow_root = state.cfg.lock().map_err(|e| e.to_string())?.wow_root.clone();
-    let path = latest_wga_lua(&wow_root)?;
-    let parsed = parse_sv::read_snapshot_from_lua(&path)?;
+    eprintln!("[snap] get_local_snapshot wow_root={wow_root}");
+    let path = latest_wga_lua(&wow_root).map_err(|e| {
+        eprintln!("[snap] latest lua err: {e}");
+        e
+    })?;
+    let parsed = parse_sv::read_snapshot_from_lua(&path).map_err(|e| {
+        eprintln!("[snap] parse err: {e}");
+        e
+    })?;
+    let equip_n = parsed
+        .payload
+        .get("equipment")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    let with_fid = parsed
+        .payload
+        .get("equipment")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter(|e| e.get("icon_file_id").and_then(|x| x.as_u64()).unwrap_or(0) > 0)
+                .count()
+        })
+        .unwrap_or(0);
+    eprintln!(
+        "[snap] ok path={} equip={} with_file_id={} hash={}",
+        path.display(),
+        equip_n,
+        with_fid,
+        parsed.hash
+    );
     Ok(serde_json::json!({
         "path": path.display().to_string(),
         "hash": parsed.hash,
@@ -346,14 +475,35 @@ async fn resolve_item_icon(item_id: i64) -> Result<Option<String>, String> {
     Ok(None)
 }
 
-/// 混合解析：icon 名 / 物品对照表 / fileId→BLP→PNG 缓存
+/// 本地 CASC：fileId → BLP → PNG
 #[tauri::command]
 async fn resolve_equip_icon(
+    app: AppHandle,
     icon: Option<String>,
     icon_file_id: Option<u32>,
     item_id: Option<i64>,
 ) -> Result<Option<icon_resolve::IconSrc>, String> {
-    Ok(icon_resolve::resolve_equip_icon(icon, icon_file_id, item_id).await)
+    eprintln!("[icon] cmd begin file_id={icon_file_id:?}");
+    match icon_resolve::resolve_equip_icon(icon, icon_file_id, item_id).await {
+        Ok(src) => {
+            emit_log(
+                &app,
+                "info",
+                format!(
+                    "图标 {fid} ← {src} ({ms}ms)",
+                    fid = icon_file_id.unwrap_or(0),
+                    src = src.source,
+                    ms = src.ms
+                ),
+            );
+            Ok(Some(src))
+        }
+        Err(e) => {
+            eprintln!("[icon] cmd err file_id={icon_file_id:?}: {e}");
+            emit_log(&app, "warn", format!("图标 fileId={icon_file_id:?}: {e}"));
+            Ok(None)
+        }
+    }
 }
 
 #[tauri::command]
@@ -399,6 +549,7 @@ async fn pick_wow_root(app: AppHandle, state: State<'_, AppState>) -> Result<Opt
         c.wow_root = s.clone();
         config::save(&c)?;
     }
+    casc_local::reset();
     watch::spawn_watcher(app.clone(), s.clone());
     Ok(Some(s))
 }
@@ -417,17 +568,26 @@ pub fn run() {
         })
         .setup(move |app| {
             let handle = app.handle().clone();
+            let window_icon = Image::from_bytes(include_bytes!("../icons/128x128.png"))
+                .expect("window icon");
+            let tray_icon = Image::from_bytes(include_bytes!("../icons/32x32.png"))
+                .expect("tray icon");
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.set_size(tauri::Size::Logical(tauri::LogicalSize::new(1180.0, 860.0)));
+                let _ = w.set_min_size(Some(tauri::Size::Logical(tauri::LogicalSize::new(
+                    980.0, 640.0,
+                ))));
+                let _ = w.set_icon(window_icon);
+            }
+            casc_local::warm_up_async();
             watch::spawn_watcher(handle.clone(), wow_root);
             let show_i = MenuItem::with_id(app, "show", "打开窗口", true, None::<&str>)?;
             let upload_i = MenuItem::with_id(app, "upload", "立即上传", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_i, &upload_i, &quit_i])?;
 
-            let icon = Image::from_bytes(include_bytes!("../icons/32x32.png"))
-                .expect("tray icon");
-
             let _tray = TrayIconBuilder::new()
-                .icon(icon)
+                .icon(tray_icon)
                 .menu(&menu)
                 .tooltip("WGA Sync")
                 .on_menu_event(|app, event| match event.id.as_ref() {
@@ -472,8 +632,16 @@ pub fn run() {
             get_captcha,
             register,
             me,
+            lookup_guild,
             create_guild,
-            join_guild,
+            apply_join_guild,
+            apply_claim_guild,
+            list_join_applications,
+            decide_join_application,
+            admin_list_guilds,
+            admin_verify_guild,
+            admin_list_claims,
+            admin_decide_claim,
             select_guild,
             logout,
             get_local_snapshot,

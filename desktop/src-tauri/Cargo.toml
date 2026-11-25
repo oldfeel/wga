@@ -30,6 +30,7 @@ base64 = "0.22"
 # 与 image-blp 对齐的 0.24
 image = { version = "0.24", default-features = false, features = ["png"] }
 image-blp = "1.2"
+casc-lib = "0.2.1"
 
 [profile.release]
 panic = "abort"

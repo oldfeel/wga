@@ -4,7 +4,7 @@
 ## Notes: Local character snapshot for self-hosted guild tools. No network.
 ## Notes-zhCN: 本地角色快照，供自托管公会助手使用（无网络请求）。
 ## Author: 宜阳县树皮软件开发工作室
-## Version: 0.1.14
+## Version: 0.1.26
 ## SavedVariables: WGADB
 ## DefaultState: enabled
 

@@ -21,10 +21,13 @@ async function request<T>(
 
 export const api = {
   login: (username: string, password: string) =>
-    request<{ token: string; user: { id: string; username: string } }>(
-      "/auth/login",
-      { method: "POST", body: JSON.stringify({ username, password }) }
-    ),
+    request<{
+      token: string;
+      user: { id: string; username: string; is_admin?: boolean };
+    }>("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ username, password }),
+    }),
   captcha: () =>
     request<{ captcha_id: string; image: string }>("/auth/captcha"),
   register: (
@@ -32,13 +35,11 @@ export const api = {
     password: string,
     display_name?: string,
     captcha_id?: string,
-    captcha_code?: string,
-    invite_code?: string
+    captcha_code?: string
   ) =>
     request<{
       token: string;
-      user: { id: string; username: string };
-      guild?: { id: string; name: string; role: string };
+      user: { id: string; username: string; is_admin?: boolean };
     }>("/auth/register", {
       method: "POST",
       body: JSON.stringify({
@@ -47,36 +48,162 @@ export const api = {
         display_name,
         captcha_id,
         captcha_code,
-        invite_code,
       }),
     }),
   me: (token: string) =>
     request<{
-      user: { id: string; username: string };
+      user: { id: string; username: string; is_admin?: boolean };
       guilds: Array<{
         id: string;
         name: string;
         role: string;
-        invite_code: string;
+        verification_status?: string;
+        flavor?: string;
+        region_key?: string;
+        realm_name?: string;
       }>;
     }>("/auth/me", { token }),
-  createGuild: (token: string, name: string) =>
-    request<{ id: string; name: string; invite_code: string }>("/guilds", {
+  lookupGuild: (
+    token: string,
+    q: {
+      flavor: string;
+      region_key: string;
+      realm_name: string;
+      guild_name: string;
+    }
+  ) => {
+    const qs = new URLSearchParams(q).toString();
+    return request<{
+      status: "found" | "not_found";
+      id?: string;
+      name?: string;
+      verification_status?: string;
+      is_member?: boolean;
+      is_owner?: boolean;
+      role?: string;
+      flavor?: string;
+      region_key?: string;
+      realm_name?: string;
+      guild_name?: string;
+    }>(`/guilds/lookup?${qs}`, { token });
+  },
+  createGuild: (
+    token: string,
+    body: {
+      name: string;
+      flavor: string;
+      region_key: string;
+      realm_name: string;
+    }
+  ) =>
+    request<{
+      id: string;
+      name: string;
+      verification_status: string;
+    }>("/guilds", {
       method: "POST",
       token,
-      body: JSON.stringify({ name }),
+      body: JSON.stringify(body),
     }),
-  joinGuild: (token: string, invite_code: string) =>
-    request<{ id: string; name: string }>("/guilds/join", {
-      method: "POST",
-      token,
-      body: JSON.stringify({ invite_code }),
-    }),
-  rotateInvite: (token: string, guildId: string) =>
-    request<{ id: string; invite_code: string }>(
-      `/guilds/${guildId}/invite/rotate`,
-      { method: "POST", token, body: "{}" }
+  applyJoin: (token: string, guildId: string, message?: string) =>
+    request<{ id: string; status: string }>(
+      `/guilds/${guildId}/join-applications`,
+      {
+        method: "POST",
+        token,
+        body: JSON.stringify({ message: message || "" }),
+      }
     ),
+  listJoinApplications: (token: string, guildId: string) =>
+    request<{
+      applications: Array<{
+        id: string;
+        user_id: string;
+        username: string;
+        display_name?: string;
+        message?: string;
+        status: string;
+        created_at: string;
+      }>;
+    }>(`/guilds/${guildId}/join-applications?status=pending`, { token }),
+  decideJoinApplication: (
+    token: string,
+    guildId: string,
+    appId: string,
+    decision: "approve" | "reject"
+  ) =>
+    request<{ ok: boolean }>(
+      `/guilds/${guildId}/join-applications/${appId}/decide`,
+      {
+        method: "POST",
+        token,
+        body: JSON.stringify({ decision }),
+      }
+    ),
+  applyClaim: (
+    token: string,
+    guildId: string,
+    body: {
+      is_leader: boolean;
+      character_name?: string;
+      realm_name?: string;
+      message?: string;
+    }
+  ) =>
+    request<{ id: string; status: string }>(
+      `/guilds/${guildId}/claim-applications`,
+      {
+        method: "POST",
+        token,
+        body: JSON.stringify(body),
+      }
+    ),
+  adminListGuilds: (token: string) =>
+    request<{
+      guilds: Array<{
+        id: string;
+        name: string;
+        verification_status: string;
+        flavor: string;
+        region_key: string;
+        realm_name: string;
+        created_by?: string;
+        created_at: string;
+      }>;
+    }>("/admin/guilds?status=pending", { token }),
+  adminVerifyGuild: (
+    token: string,
+    guildId: string,
+    decision: "verify" | "reject",
+    region_key?: string
+  ) =>
+    request<{ ok: boolean }>(`/admin/guilds/${guildId}/verify`, {
+      method: "POST",
+      token,
+      body: JSON.stringify({ decision, region_key }),
+    }),
+  adminListClaims: (token: string) =>
+    request<{
+      applications: Array<{
+        id: string;
+        guild_id: string;
+        guild_name: string;
+        username: string;
+        character_name?: string;
+        realm_name?: string;
+        created_at: string;
+      }>;
+    }>("/admin/claim-applications?status=pending", { token }),
+  adminDecideClaim: (
+    token: string,
+    appId: string,
+    decision: "approve" | "reject"
+  ) =>
+    request<{ ok: boolean }>(`/admin/claim-applications/${appId}/decide`, {
+      method: "POST",
+      token,
+      body: JSON.stringify({ decision }),
+    }),
   members: (token: string, guildId: string) =>
     request<{
       members: Array<{

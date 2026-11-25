@@ -11,6 +11,7 @@ import {
   qualityColor,
   resolveIconName,
   transmogText,
+  wowTextToHtml,
   type CharSummary,
   type EquipItem,
 } from "../lib/armory";
@@ -61,6 +62,93 @@ function SlotIcon({ e }: { e?: EquipItem }) {
   );
 }
 
+const QUALITY_LABEL = [
+  "粗糙",
+  "普通",
+  "优秀",
+  "精良",
+  "史诗",
+  "传说",
+  "神器",
+  "传家宝",
+];
+
+function EquipTooltip({ slot, e }: { slot: string; e: EquipItem }) {
+  const q = e.quality ?? 1;
+  const color = qualityColor(q);
+  const tm = transmogText(e.transmog);
+  const lines = e.tooltip_lines || [];
+  return (
+    <div className="item-tip-panel">
+      {!lines.length ? (
+        <div className="item-tip-name" style={{ color }}>
+          {e.name || "未知物品"}
+        </div>
+      ) : null}
+      {lines.length
+        ? lines.map((ln, i) => {
+            const c = ln.color;
+            const style =
+              c && c.r != null
+                ? { color: `rgb(${c.r},${c.g ?? 0},${c.b ?? 0})` }
+                : undefined;
+            const left = ln.left || "";
+            const right = ln.right || "";
+            if (!left && !right) {
+              return <div key={i} className="item-tip-blank" />;
+            }
+            if (right) {
+              return (
+                <div key={i} className="item-tip-row" style={style}>
+                  <span dangerouslySetInnerHTML={{ __html: wowTextToHtml(left) }} />
+                  <span dangerouslySetInnerHTML={{ __html: wowTextToHtml(right) }} />
+                </div>
+              );
+            }
+            return (
+              <div
+                key={i}
+                className="item-tip-line"
+                style={style}
+                dangerouslySetInnerHTML={{ __html: wowTextToHtml(left) }}
+              />
+            );
+          })
+        : (
+          <>
+            <div className="item-tip-line">
+              {SLOT_LABEL[slot] || slot}
+              {e.item_level != null ? ` · 物品等级 ${e.item_level}` : ""}
+            </div>
+            {e.quality != null ? (
+              <div className="item-tip-line" style={{ color }}>
+                {QUALITY_LABEL[e.quality] || `品质 ${e.quality}`}
+              </div>
+            ) : null}
+            {e.desc ? (
+              <div
+                className="item-tip-line"
+                dangerouslySetInnerHTML={{ __html: wowTextToHtml(e.desc) }}
+              />
+            ) : null}
+            <div className="item-tip-line muted">
+              （请升级插件并重新快照以获取完整属性）
+            </div>
+          </>
+        )}
+      {e.item_id != null ? (
+        <div className="item-tip-id muted">物品ID {e.item_id}</div>
+      ) : null}
+      {tm ? (
+        <div
+          className="item-tip-tm"
+          dangerouslySetInnerHTML={{ __html: `外观：${wowTextToHtml(tm)}` }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
 function SlotRow({
   slot,
   e,
@@ -95,6 +183,7 @@ function SlotRow({
       className={
         "armory-item" +
         (empty ? " empty" : "") +
+        (!empty ? " has-tip" : "") +
         (side === "left" ? " side-left" : "") +
         (side === "weapon" ? " side-weapon" : "")
       }
@@ -111,6 +200,7 @@ function SlotRow({
           {meta}
         </>
       )}
+      {!empty && e ? <EquipTooltip slot={slot} e={e} /> : null}
     </div>
   );
 }
@@ -137,7 +227,9 @@ export default function ArmoryEquip({
       </div>
       <div className="paperdoll-center">
         <div className="paperdoll-figure">
-          <div className="paperdoll-silhouette" aria-hidden />
+          <div className="paperdoll-silhouette" aria-hidden>
+            <img className="paperdoll-art" src="/paperdoll-figure.jpg" alt="" />
+          </div>
           <div className="paperdoll-info">
             <div className="paperdoll-name">
               {c.name || "角色"}

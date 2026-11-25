@@ -10,7 +10,6 @@ export default function RegisterPage() {
   const [captchaId, setCaptchaId] = useState("");
   const [captchaImg, setCaptchaImg] = useState("");
   const [captchaCode, setCaptchaCode] = useState("");
-  const [inviteCode, setInviteCode] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -42,14 +41,13 @@ export default function RegisterPage() {
         password,
         username.trim(),
         captchaId,
-        captchaCode.trim(),
-        inviteCode.trim() || undefined
+        captchaCode.trim()
       );
-      auth.setSession(data.token, data.user.username);
+      auth.setSession(data.token, data.user.username, data.user.is_admin);
       const me = await api.me(data.token);
       auth.setGuilds(me.guilds || []);
-      if (data.guild?.id) auth.setGuildId(data.guild.id);
-      else if (me.guilds?.[0]) auth.setGuildId(me.guilds[0].id);
+      auth.setIsAdmin(!!me.user?.is_admin);
+      if (me.guilds?.[0]) auth.setGuildId(me.guilds[0].id);
     } catch (ex) {
       setErr(ex instanceof Error ? ex.message : String(ex));
       await loadCaptcha();
@@ -120,14 +118,6 @@ export default function RegisterPage() {
             required
             autoComplete="off"
             style={{ marginTop: 8 }}
-          />
-        </label>
-        <label>
-          邀请码（选填）
-          <input
-            value={inviteCode}
-            onChange={(e) => setInviteCode(e.target.value)}
-            placeholder="有公会邀请码可填写"
           />
         </label>
         {err && <p className="error">{err}</p>}

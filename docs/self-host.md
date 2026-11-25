@@ -37,6 +37,9 @@ effective_cache_size = 512MB
 ```bash
 sudo systemctl restart postgresql
 psql -U wga -d wga -h 127.0.0.1 -f /path/to/wga/server/migrations/000001_init.up.sql
+psql -U wga -d wga -h 127.0.0.1 -f /path/to/wga/server/migrations/000002_guild_hierarchy.up.sql
+# 可选：种子平台管理员（逗号分隔用户名）
+# export ADMIN_USERNAMES=alice
 ```
 
 ## 2. Go API

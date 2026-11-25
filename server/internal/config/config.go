@@ -3,28 +3,42 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
 type Config struct {
-	HTTPAddr     string
-	CORSOrigin   string
-	DatabaseURL  string
-	JWTSecret    string
-	JWTTTL       time.Duration
-	DBMaxConns   int32
+	HTTPAddr        string
+	CORSOrigin      string
+	DatabaseURL     string
+	JWTSecret       string
+	JWTTTL          time.Duration
+	DBMaxConns      int32
+	AdminUsernames  []string
 }
 
 func Load() Config {
 	ttlHours := envInt("JWT_TTL_HOURS", 168)
 	return Config{
-		HTTPAddr:    env("HTTP_ADDR", "0.0.0.0:8080"),
-		CORSOrigin:  env("CORS_ORIGIN", "http://localhost:5173"),
-		DatabaseURL: env("DATABASE_URL", "postgres://wga:change-me@127.0.0.1:5432/wga?sslmode=disable"),
-		JWTSecret:   env("JWT_SECRET", "dev-only-change-me"),
-		JWTTTL:      time.Duration(ttlHours) * time.Hour,
-		DBMaxConns:  int32(envInt("DB_MAX_CONNS", 10)),
+		HTTPAddr:       env("HTTP_ADDR", "0.0.0.0:8080"),
+		CORSOrigin:     env("CORS_ORIGIN", "http://localhost:5173"),
+		DatabaseURL:    env("DATABASE_URL", "postgres://wga:change-me@127.0.0.1:5432/wga?sslmode=disable"),
+		JWTSecret:      env("JWT_SECRET", "dev-only-change-me"),
+		JWTTTL:         time.Duration(ttlHours) * time.Hour,
+		DBMaxConns:     int32(envInt("DB_MAX_CONNS", 10)),
+		AdminUsernames: splitCSV(env("ADMIN_USERNAMES", "")),
 	}
+}
+
+func splitCSV(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func env(key, fallback string) string {

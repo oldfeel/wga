@@ -18,9 +18,14 @@ export default function LoginPage() {
     setErr("");
     try {
       const data = await api.login(username.trim(), password);
-      auth.setSession(data.token, data.user.username);
+      auth.setSession(
+        data.token,
+        data.user.username,
+        (data.user as { is_admin?: boolean }).is_admin
+      );
       const me = await api.me(data.token);
       auth.setGuilds(me.guilds || []);
+      auth.setIsAdmin(!!me.user?.is_admin);
       if (me.guilds?.[0] && !auth.guildId) auth.setGuildId(me.guilds[0].id);
     } catch (ex) {
       setErr(ex instanceof Error ? ex.message : String(ex));

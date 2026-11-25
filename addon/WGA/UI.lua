@@ -1,6 +1,7 @@
 --[[ 小地图按钮 + 简易配置面板 ]]
 
-local ICON = "Interface\\Icons\\INV_Misc_Note_01"
+-- 自定义小地图图标（Media/minimap.tga / .png）
+local ICON = "Interface\\AddOns\\WGA\\Media\\minimap"
 
 local function ensureDB()
   WGADB = WGADB or {}
@@ -232,6 +233,7 @@ function WGA.InitUI()
   local icon = btn:CreateTexture(nil, "BACKGROUND")
   icon:SetSize(20, 20)
   icon:SetTexture(ICON)
+  icon:SetTexCoord(0.05, 0.95, 0.05, 0.95)
   icon:SetPoint("CENTER", 0, 1)
   btn.icon = icon
 

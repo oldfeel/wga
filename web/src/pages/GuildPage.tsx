@@ -18,24 +18,53 @@ type Announcement = {
   created_at: string;
 };
 
+type JoinApp = {
+  id: string;
+  username: string;
+  display_name?: string;
+  message?: string;
+  created_at: string;
+};
+
+function verifyBadge(status?: string) {
+  if (status === "verified") return "已认证";
+  if (status === "rejected") return "已拒绝";
+  return "待认证";
+}
+
 export default function GuildPage() {
   const auth = useAuth();
-  const [name, setName] = useState("");
-  const [invite, setInvite] = useState("");
   const [msg, setMsg] = useState("");
   const [members, setMembers] = useState<Member[]>([]);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [joinApps, setJoinApps] = useState<JoinApp[]>([]);
   const [annTitle, setAnnTitle] = useState("");
   const [annBody, setAnnBody] = useState("");
+
+  const [flavor, setFlavor] = useState("forever");
+  const [regionKey, setRegionKey] = useState("UNKNOWN");
+  const [realmName, setRealmName] = useState("");
+  const [guildName, setGuildName] = useState("");
+  const [isLeader, setIsLeader] = useState(false);
+  const [lookup, setLookup] = useState<{
+    status: string;
+    id?: string;
+    name?: string;
+    verification_status?: string;
+    is_member?: boolean;
+    is_owner?: boolean;
+  } | null>(null);
 
   const current = auth.guilds.find((g) => g.id === auth.guildId);
   const isOwner = current?.role === "owner";
   const canPost =
     current?.role === "owner" || current?.role === "officer";
+  const canReviewJoin = canPost;
 
   async function refresh() {
     const me = await api.me(auth.token);
     auth.setGuilds(me.guilds || []);
+    auth.setIsAdmin(!!me.user?.is_admin);
     const gid = auth.guildId || me.guilds?.[0]?.id;
     if (gid) {
       if (!auth.guildId) auth.setGuildId(gid);
@@ -45,9 +74,21 @@ export default function GuildPage() {
       ]);
       setMembers(m.members || []);
       setAnnouncements(a.announcements || []);
+      const role = (me.guilds || []).find((g) => g.id === gid)?.role;
+      if (role === "owner" || role === "officer") {
+        try {
+          const apps = await api.listJoinApplications(auth.token, gid);
+          setJoinApps(apps.applications || []);
+        } catch {
+          setJoinApps([]);
+        }
+      } else {
+        setJoinApps([]);
+      }
     } else {
       setMembers([]);
       setAnnouncements([]);
+      setJoinApps([]);
     }
   }
 
@@ -56,27 +97,27 @@ export default function GuildPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.guildId]);
 
-  async function create(e: FormEvent) {
+  async function doLookup(e: FormEvent) {
     e.preventDefault();
     try {
-      const g = await api.createGuild(auth.token, name.trim());
-      setMsg(`已创建，邀请码 ${g.invite_code}`);
-      auth.setGuildId(g.id);
-      await refresh();
-      setName("");
-    } catch (ex) {
-      setMsg(ex instanceof Error ? ex.message : String(ex));
-    }
-  }
-
-  async function join(e: FormEvent) {
-    e.preventDefault();
-    try {
-      const g = await api.joinGuild(auth.token, invite.trim());
-      setMsg(`已加入 ${g.name}`);
-      auth.setGuildId(g.id);
-      await refresh();
-      setInvite("");
+      const r = await api.lookupGuild(auth.token, {
+        flavor: flavor.trim() || "forever",
+        region_key: regionKey.trim() || "UNKNOWN",
+        realm_name: realmName.trim(),
+        guild_name: guildName.trim(),
+      });
+      setLookup(r);
+      if (r.status === "not_found") {
+        setMsg(`未找到「${guildName}」，可创建公会（待认证）`);
+      } else if (r.is_member) {
+        setMsg(`已在公会「${r.name}」`);
+        if (r.id) auth.setGuildId(r.id);
+        await refresh();
+      } else if (isLeader && !r.is_owner) {
+        setMsg(`公会已存在。你勾选了游戏会长，可申请认领`);
+      } else {
+        setMsg(`公会「${r.name}」已存在，可申请加入`);
+      }
     } catch (ex) {
       setMsg(ex instanceof Error ? ex.message : String(ex));
     }
@@ -96,29 +137,186 @@ export default function GuildPage() {
                 onClick={() => auth.setGuildId(g.id)}
                 style={{ flex: 1 }}
               >
-                {g.name} · {g.role} · 邀请码 {g.invite_code}
+                {g.name} · {g.role} · {verifyBadge(g.verification_status)}
+                {g.realm_name
+                  ? ` · ${g.flavor}/${g.region_key}/${g.realm_name}`
+                  : ""}
               </button>
-              {g.role === "owner" && g.id === auth.guildId && (
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section className="card">
+        <h2>按游戏公会查询</h2>
+        <p className="muted">
+          填写与游戏一致的服务器层级与公会名（桌面端可从插件快照自动读取）。无限服二级填
+          PVP/PVE，未知可填 UNKNOWN。
+        </p>
+        <form className="stack-form" onSubmit={doLookup}>
+          <label>
+            客户端
+            <select value={flavor} onChange={(e) => setFlavor(e.target.value)}>
+              <option value="forever">无限服</option>
+              <option value="retail">正式服</option>
+              <option value="classic">怀旧服</option>
+            </select>
+          </label>
+          <label>
+            大区 / 类型
+            <input
+              value={regionKey}
+              onChange={(e) => setRegionKey(e.target.value)}
+              placeholder="PVP / PVE / 一区 / UNKNOWN"
+              required
+            />
+          </label>
+          <label>
+            服务器名
+            <input
+              value={realmName}
+              onChange={(e) => setRealmName(e.target.value)}
+              required
+            />
+          </label>
+          <label>
+            公会名
+            <input
+              value={guildName}
+              onChange={(e) => setGuildName(e.target.value)}
+              required
+            />
+          </label>
+          <label className="row" style={{ gap: 8, alignItems: "center" }}>
+            <input
+              type="checkbox"
+              checked={isLeader}
+              onChange={(e) => setIsLeader(e.target.checked)}
+            />
+            我是游戏内会长
+          </label>
+          <button type="submit">查询</button>
+        </form>
+        {lookup && (
+          <div className="row" style={{ marginTop: 12, flexWrap: "wrap" }}>
+            {lookup.status === "not_found" && (
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    const g = await api.createGuild(auth.token, {
+                      name: guildName.trim(),
+                      flavor: flavor.trim() || "forever",
+                      region_key: regionKey.trim() || "UNKNOWN",
+                      realm_name: realmName.trim(),
+                    });
+                    auth.setGuildId(g.id);
+                    setMsg(`已创建「${g.name}」，${verifyBadge(g.verification_status)}`);
+                    setLookup(null);
+                    await refresh();
+                  } catch (ex) {
+                    setMsg(ex instanceof Error ? ex.message : String(ex));
+                  }
+                }}
+              >
+                创建公会
+              </button>
+            )}
+            {lookup.status === "found" && !lookup.is_member && !isLeader && (
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!lookup.id) return;
+                  try {
+                    await api.applyJoin(auth.token, lookup.id);
+                    setMsg("已提交入会申请，等待会长审核");
+                  } catch (ex) {
+                    setMsg(ex instanceof Error ? ex.message : String(ex));
+                  }
+                }}
+              >
+                申请加入
+              </button>
+            )}
+            {lookup.status === "found" &&
+              !lookup.is_owner &&
+              isLeader && (
                 <button
                   type="button"
-                  className="secondary"
+                  onClick={async () => {
+                    if (!lookup.id) return;
+                    try {
+                      await api.applyClaim(auth.token, lookup.id, {
+                        is_leader: true,
+                        realm_name: realmName.trim(),
+                      });
+                      setMsg("已提交认领申请，等待管理员审核");
+                    } catch (ex) {
+                      setMsg(ex instanceof Error ? ex.message : String(ex));
+                    }
+                  }}
+                >
+                  申请认领
+                </button>
+              )}
+          </div>
+        )}
+      </section>
+
+      {canReviewJoin && joinApps.length > 0 && (
+        <section className="card">
+          <h2>入会申请</h2>
+          <ul className="list">
+            {joinApps.map((a) => (
+              <li key={a.id} className="act-row">
+                <span style={{ flex: 1 }}>
+                  {a.display_name || a.username}
+                  {a.message ? ` · ${a.message}` : ""}
+                </span>
+                <button
+                  type="button"
                   onClick={async () => {
                     try {
-                      const r = await api.rotateInvite(auth.token, g.id);
-                      setMsg(`新邀请码：${r.invite_code}`);
+                      await api.decideJoinApplication(
+                        auth.token,
+                        auth.guildId,
+                        a.id,
+                        "approve"
+                      );
+                      setMsg("已通过");
                       await refresh();
                     } catch (ex) {
                       setMsg(ex instanceof Error ? ex.message : String(ex));
                     }
                   }}
                 >
-                  重置邀请码
+                  通过
                 </button>
-              )}
-            </li>
-          ))}
-        </ul>
-      </section>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={async () => {
+                    try {
+                      await api.decideJoinApplication(
+                        auth.token,
+                        auth.guildId,
+                        a.id,
+                        "reject"
+                      );
+                      setMsg("已拒绝");
+                      await refresh();
+                    } catch (ex) {
+                      setMsg(ex instanceof Error ? ex.message : String(ex));
+                    }
+                  }}
+                >
+                  拒绝
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {auth.guildId && (
         <section className="card">
@@ -240,30 +438,6 @@ export default function GuildPage() {
         </section>
       )}
 
-      <section className="card">
-        <h2>创建公会</h2>
-        <form className="row" onSubmit={create}>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="公会名"
-            required
-          />
-          <button type="submit">创建</button>
-        </form>
-      </section>
-      <section className="card">
-        <h2>加入公会</h2>
-        <form className="row" onSubmit={join}>
-          <input
-            value={invite}
-            onChange={(e) => setInvite(e.target.value)}
-            placeholder="邀请码"
-            required
-          />
-          <button type="submit">加入</button>
-        </form>
-      </section>
       {msg && <p className="muted">{msg}</p>}
     </div>
   );

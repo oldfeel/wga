@@ -79,7 +79,6 @@ impl Api {
         display_name: &str,
         captcha_id: &str,
         captcha_code: &str,
-        invite_code: &str,
     ) -> Result<Value, String> {
         self.request(
             cfg,
@@ -90,8 +89,7 @@ impl Api {
                 "password": password,
                 "display_name": display_name,
                 "captcha_id": captcha_id,
-                "captcha_code": captcha_code,
-                "invite_code": invite_code
+                "captcha_code": captcha_code
             })),
             false,
         )
@@ -103,23 +101,168 @@ impl Api {
             .await
     }
 
-    pub async fn create_guild(&self, cfg: &AppConfig, name: &str) -> Result<Value, String> {
+    pub async fn lookup_guild(
+        &self,
+        cfg: &AppConfig,
+        flavor: &str,
+        region_key: &str,
+        realm_name: &str,
+        guild_name: &str,
+    ) -> Result<Value, String> {
+        let q = format!(
+            "/guilds/lookup?flavor={}&region_key={}&realm_name={}&guild_name={}",
+            urlencoding_lite(flavor),
+            urlencoding_lite(region_key),
+            urlencoding_lite(realm_name),
+            urlencoding_lite(guild_name),
+        );
+        self.request(cfg, reqwest::Method::GET, &q, None, true)
+            .await
+    }
+
+    pub async fn create_guild(
+        &self,
+        cfg: &AppConfig,
+        name: &str,
+        flavor: &str,
+        region_key: &str,
+        realm_name: &str,
+    ) -> Result<Value, String> {
         self.request(
             cfg,
             reqwest::Method::POST,
             "/guilds",
-            Some(&serde_json::json!({ "name": name })),
+            Some(&serde_json::json!({
+                "name": name,
+                "flavor": flavor,
+                "region_key": region_key,
+                "realm_name": realm_name
+            })),
             true,
         )
         .await
     }
 
-    pub async fn join_guild(&self, cfg: &AppConfig, invite_code: &str) -> Result<Value, String> {
+    pub async fn apply_join_guild(
+        &self,
+        cfg: &AppConfig,
+        guild_id: &str,
+        message: &str,
+    ) -> Result<Value, String> {
+        let path = format!("/guilds/{guild_id}/join-applications");
         self.request(
             cfg,
             reqwest::Method::POST,
-            "/guilds/join",
-            Some(&serde_json::json!({ "invite_code": invite_code })),
+            &path,
+            Some(&serde_json::json!({ "message": message })),
+            true,
+        )
+        .await
+    }
+
+    pub async fn apply_claim_guild(
+        &self,
+        cfg: &AppConfig,
+        guild_id: &str,
+        character_name: &str,
+        realm_name: &str,
+        is_leader: bool,
+        message: &str,
+    ) -> Result<Value, String> {
+        let path = format!("/guilds/{guild_id}/claim-applications");
+        self.request(
+            cfg,
+            reqwest::Method::POST,
+            &path,
+            Some(&serde_json::json!({
+                "is_leader": is_leader,
+                "character_name": character_name,
+                "realm_name": realm_name,
+                "message": message
+            })),
+            true,
+        )
+        .await
+    }
+
+    pub async fn list_join_applications(
+        &self,
+        cfg: &AppConfig,
+        guild_id: &str,
+    ) -> Result<Value, String> {
+        let path = format!("/guilds/{guild_id}/join-applications?status=pending");
+        self.request(cfg, reqwest::Method::GET, &path, None, true)
+            .await
+    }
+
+    pub async fn decide_join_application(
+        &self,
+        cfg: &AppConfig,
+        guild_id: &str,
+        app_id: &str,
+        decision: &str,
+    ) -> Result<Value, String> {
+        let path = format!("/guilds/{guild_id}/join-applications/{app_id}/decide");
+        self.request(
+            cfg,
+            reqwest::Method::POST,
+            &path,
+            Some(&serde_json::json!({ "decision": decision })),
+            true,
+        )
+        .await
+    }
+
+    pub async fn admin_list_guilds(&self, cfg: &AppConfig) -> Result<Value, String> {
+        self.request(
+            cfg,
+            reqwest::Method::GET,
+            "/admin/guilds?status=pending",
+            None,
+            true,
+        )
+        .await
+    }
+
+    pub async fn admin_verify_guild(
+        &self,
+        cfg: &AppConfig,
+        guild_id: &str,
+        decision: &str,
+        region_key: &str,
+    ) -> Result<Value, String> {
+        let path = format!("/admin/guilds/{guild_id}/verify");
+        let mut body = serde_json::json!({ "decision": decision });
+        if !region_key.is_empty() {
+            body["region_key"] = Value::String(region_key.to_string());
+        }
+        self.request(cfg, reqwest::Method::POST, &path, Some(&body), true)
+            .await
+    }
+
+    pub async fn admin_list_claims(&self, cfg: &AppConfig) -> Result<Value, String> {
+        self.request(
+            cfg,
+            reqwest::Method::GET,
+            "/admin/claim-applications?status=pending",
+            None,
+            true,
+        )
+        .await
+    }
+
+    pub async fn admin_decide_claim(
+        &self,
+        cfg: &AppConfig,
+        app_id: &str,
+        decision: &str,
+    ) -> Result<Value, String> {
+        let path = format!("/admin/claim-applications/{app_id}/decide");
+        self.request(
+            cfg,
+            reqwest::Method::POST,
+            &path,
+            Some(&serde_json::json!({ "decision": decision })),
             true,
         )
         .await
@@ -135,4 +278,17 @@ impl Api {
         self.request(cfg, reqwest::Method::POST, &path, Some(payload), true)
             .await
     }
+}
+
+fn urlencoding_lite(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 3);
+    for b in s.as_bytes() {
+        match *b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(*b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }

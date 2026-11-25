@@ -6,7 +6,7 @@
 
 local ADDON_NAME = ...
 WGA = WGA or {}
-WGA.VERSION = "0.1.14"
+WGA.VERSION = "0.1.26"
 
 local DEFAULT_AUTO_MINUTES = 2
 local MIN_AUTO_MINUTES = 1
@@ -48,6 +48,31 @@ local function defaults()
   if type(WGADB.minimap.angle) ~= "number" then
     WGADB.minimap.angle = 220
   end
+  -- 手动快照后自动 ReloadUI，把 SavedVariables 刷到磁盘（插件无法任意写文件）
+  if WGADB.auto_reload_on_snap == nil then
+    WGADB.auto_reload_on_snap = true
+  end
+end
+
+--- 客户端禁止插件随意写盘；SavedVariables 只在登出 / ReloadUI 时落盘
+function WGA.FlushToDisk(reason)
+  defaults()
+  print(string.format(
+    "|cff33ff99WGA|r 正在刷新界面以写入磁盘%s…",
+    reason and ("（" .. tostring(reason) .. "）") or ""
+  ))
+  if C_UI and C_UI.Reload then
+    C_UI.Reload()
+  elseif ReloadUI then
+    ReloadUI()
+  else
+    print("|cffff6666WGA|r 无法 ReloadUI，请手动 /reload")
+  end
+end
+
+function WGA.ShouldReloadAfterSnap()
+  defaults()
+  return WGADB.auto_reload_on_snap ~= false
 end
 
 local function markDirty(reason)
@@ -175,11 +200,13 @@ SLASH_WGA1 = "/wga"
 SlashCmdList["WGA"] = function(msg)
   msg = (msg or ""):lower():match("^%s*(.-)%s*$")
   if msg == "" or msg == "help" then
-    print("|cff33ff99WGA|r /wga snapshot — 立即采集（强制写入）")
+    print("|cff33ff99WGA|r /wga snapshot — 立即采集并刷新界面写入磁盘")
+    print("|cff33ff99WGA|r /wga snapshot noreload — 只采集到内存，不 Reload")
     print("|cff33ff99WGA|r /wga config — 打开配置面板（同小地图左键）")
     print("|cff33ff99WGA|r /wga auto — 查看自动状态")
     print("|cff33ff99WGA|r /wga auto on|off — 开关")
     print("|cff33ff99WGA|r /wga auto 2 — 变化后延迟写入的分钟数（1–120）")
+    print("|cff33ff99WGA|r /wga flush on|off — 手动快照后是否自动 Reload（默认 on）")
     print("|cff33ff99WGA|r /wga last — 最近快照摘要")
     print("|cff33ff99WGA|r /wga export — 打印最近 JSON")
     return
@@ -192,17 +219,42 @@ SlashCmdList["WGA"] = function(msg)
     end
     return
   end
-  if msg == "snapshot" or msg == "snap" then
+  if msg == "snapshot" or msg == "snap" or msg:match("^snapshot%s") or msg:match("^snap%s") then
+    local arg = msg:match("^snap%w*%s+(.+)$")
+    local noReload = arg == "noreload" or arg == "nr"
     local ok, err = pcall(WGA.CaptureSnapshot, {
       announce = true,
       force = true,
       skip_unchanged = false,
+      will_reload = (not noReload) and WGA.ShouldReloadAfterSnap(),
     })
     if not ok then
       print("|cffff6666WGA|r 采集失败: " .. tostring(err))
-    else
-      dirty = false
+      return
     end
+    dirty = false
+    if (not noReload) and WGA.ShouldReloadAfterSnap() then
+      WGA.FlushToDisk("手动快照")
+    end
+    return
+  end
+  if msg == "flush" or msg:match("^flush%s") then
+    defaults()
+    local arg = msg:match("^flush%s+(.+)$")
+    if arg == "on" or arg == "1" or arg == "true" then
+      WGADB.auto_reload_on_snap = true
+      print("|cff33ff99WGA|r 手动快照后将自动 Reload 写入磁盘")
+      return
+    end
+    if arg == "off" or arg == "0" or arg == "false" then
+      WGADB.auto_reload_on_snap = false
+      print("|cff33ff99WGA|r 已关闭自动 Reload；快照后需自行 /reload")
+      return
+    end
+    print(string.format(
+      "|cff33ff99WGA|r 快照后自动 Reload：%s（/wga flush on|off）",
+      WGADB.auto_reload_on_snap ~= false and "开" or "关"
+    ))
     return
   end
   if msg == "auto" or msg:match("^auto%s") then
@@ -325,13 +377,19 @@ function WGA.SetAutoInterval(minutes)
 end
 
 function WGA.DoSnapshot(announce)
+  local willReload = WGA.ShouldReloadAfterSnap()
   local ok, err = pcall(WGA.CaptureSnapshot, {
     announce = announce ~= false,
     force = true,
     skip_unchanged = false,
+    will_reload = willReload,
   })
   if ok then
     dirty = false
+    if willReload then
+      -- 按钮点击属于硬件事件，允许 ReloadUI
+      WGA.FlushToDisk("手动快照")
+    end
   end
   return ok, err
 end

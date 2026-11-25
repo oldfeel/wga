@@ -1,12 +1,39 @@
 --[[ 采集角色快照 → WGADB（SavedVariables）+ last_json 字符串 ]]
+-- 栏位：优先 GetInventorySlotInfo；圣物/远程 = RANGEDSLOT
+local function invSlot(slotName, fallback)
+  if type(GetInventorySlotInfo) == "function" then
+    local ok, id = pcall(GetInventorySlotInfo, slotName)
+    if ok and type(id) == "number" and id > 0 then
+      return id
+    end
+  end
+  return fallback
+end
 
-local SLOT_MAP = {
-  {1, "HEAD"}, {2, "NECK"}, {3, "SHOULDER"}, {5, "CHEST"},
-  {6, "WAIST"}, {7, "LEGS"}, {8, "FEET"}, {9, "WRIST"},
-  {10, "HANDS"}, {11, "FINGER1"}, {12, "FINGER2"},
-  {13, "TRINKET1"}, {14, "TRINKET2"}, {15, "BACK"},
-  {16, "MAINHAND"}, {17, "OFFHAND"},
-}
+local function getSlotMap()
+  return {
+  {invSlot("HEADSLOT", 1), "HEAD"},
+  {invSlot("NECKSLOT", 2), "NECK"},
+  {invSlot("SHOULDERSLOT", 3), "SHOULDER"},
+  {invSlot("CHESTSLOT", 5), "CHEST"},
+  {invSlot("SHIRTSLOT", 4), "SHIRT"},
+  {invSlot("TABARDSLOT", 19), "TABARD"},
+  {invSlot("WAISTSLOT", 6), "WAIST"},
+  {invSlot("LEGSSLOT", 7), "LEGS"},
+  {invSlot("FEETSLOT", 8), "FEET"},
+  {invSlot("WRISTSLOT", 9), "WRIST"},
+  {invSlot("HANDSSLOT", 10), "HANDS"},
+  {invSlot("FINGER0SLOT", 11), "FINGER1"},
+  {invSlot("FINGER1SLOT", 12), "FINGER2"},
+  {invSlot("TRINKET0SLOT", 13), "TRINKET1"},
+  {invSlot("TRINKET1SLOT", 14), "TRINKET2"},
+  {invSlot("BACKSLOT", 15), "BACK"},
+  {invSlot("MAINHANDSLOT", 16), "MAINHAND"},
+  {invSlot("SECONDARYHANDSLOT", 17), "OFFHAND"},
+  -- 圣物（神像/圣契/图腾）与远程武器同栏
+  {invSlot("RANGEDSLOT", 18), "RELIC"},
+  }
+end
 
 local function esc(s)
   if s == nil then return "null" end
@@ -243,6 +270,112 @@ local function resolveIcon(itemId, link, slotId)
   return bestName, fileId
 end
 
+local function rgb255(c)
+  if not c then return nil end
+  local r = c.r or c.R or 1
+  local g = c.g or c.G or 1
+  local b = c.b or c.B or 1
+  return {
+    r = math.floor(r * 255 + 0.5),
+    g = math.floor(g * 255 + 0.5),
+    b = math.floor(b * 255 + 0.5),
+  }
+end
+
+local function pushTipLine(lines, left, right, color)
+  left = left and tostring(left) or ""
+  right = right and tostring(right) or ""
+  if left == "" and right == "" then return end
+  -- 跳过纯空白行占位，保留分隔感用空 left
+  local row = { left = left, right = right }
+  if color then row.color = color end
+  lines[#lines + 1] = row
+end
+
+-- 完整物品 tip：属性 / 装备特效 / 描述文字
+local function collectTooltipLines(slotId, link)
+  local lines = {}
+  local function takeFromData(data)
+    if not data or not data.lines then return 0 end
+    local n = 0
+    for _, line in ipairs(data.lines) do
+      local left = line.leftText and tostring(line.leftText) or ""
+      local right = line.rightText and tostring(line.rightText) or ""
+      if left ~= "" or right ~= "" then
+        local row = { left = left, right = right }
+        local c = rgb255(line.leftColor)
+        if c then row.color = c end
+        lines[#lines + 1] = row
+        n = n + 1
+      end
+    end
+    return n
+  end
+
+  -- 1) 结构化 tip
+  if C_TooltipInfo then
+    if slotId and C_TooltipInfo.GetInventoryItem then
+      local ok, d = pcall(C_TooltipInfo.GetInventoryItem, "player", slotId, false)
+      if ok and takeFromData(d) > 0 then return lines end
+    end
+    if link and C_TooltipInfo.GetHyperlink then
+      lines = {}
+      local ok, d = pcall(C_TooltipInfo.GetHyperlink, link, nil, nil, true)
+      if ok and takeFromData(d) > 0 then return lines end
+    end
+    if link and C_TooltipInfo.GetItemByID then
+      local itemId = GetInventoryItemID and slotId and GetInventoryItemID("player", slotId)
+      if itemId then
+        lines = {}
+        local ok, d = pcall(C_TooltipInfo.GetItemByID, itemId)
+        if ok and takeFromData(d) > 0 then return lines end
+      end
+    end
+  end
+
+  -- 2) GameTooltip 扫描（无限上很稳）
+  lines = {}
+  local tip = _G.WGATooltipScanner
+  if not tip and CreateFrame then
+    local ok, frame = pcall(CreateFrame, "GameTooltip", "WGATooltipScanner", UIParent, "GameTooltipTemplate")
+    if ok then
+      tip = frame
+      tip:SetOwner(UIParent, "ANCHOR_NONE")
+      _G.WGATooltipScanner = tip
+    end
+  end
+  if tip then
+    tip:ClearLines()
+    local setOk = false
+    if slotId then
+      setOk = pcall(function() tip:SetInventoryItem("player", slotId) end)
+    end
+    if (not setOk) and link then
+      setOk = pcall(function() tip:SetHyperlink(link) end)
+    end
+    if setOk then
+      local n = tip:NumLines() or 0
+      for i = 1, n do
+        local leftFs = _G["WGATooltipScannerTextLeft" .. i]
+        local rightFs = _G["WGATooltipScannerTextRight" .. i]
+        local left = leftFs and leftFs:GetText() or ""
+        local right = rightFs and rightFs:GetText() or ""
+        local color = nil
+        if leftFs and leftFs.GetTextColor then
+          local r, g, b = leftFs:GetTextColor()
+          color = rgb255({ r = r, g = g, b = b })
+        end
+        if left ~= "" or right ~= "" then
+          local row = { left = left or "", right = right or "" }
+          if color then row.color = color end
+          lines[#lines + 1] = row
+        end
+      end
+    end
+  end
+  return lines
+end
+
 local function itemDesc(link, itemSubType, equipLoc)
   local parts = {}
   if itemSubType and itemSubType ~= "" then parts[#parts + 1] = itemSubType end
@@ -251,7 +384,6 @@ local function itemDesc(link, itemSubType, equipLoc)
   elseif equipLoc and equipLoc ~= "" then
     parts[#parts + 1] = equipLoc
   end
-  -- 额外从链接 tip 抽一行绑定信息（失败则忽略）
   if link and C_TooltipInfo and C_TooltipInfo.GetHyperlink then
     local ok, data = pcall(C_TooltipInfo.GetHyperlink, link)
     if ok and data and data.lines then
@@ -270,7 +402,7 @@ end
 
 local function collectEquipment()
   local list = {}
-  for _, pair in ipairs(SLOT_MAP) do
+  for _, pair in ipairs(getSlotMap()) do
     local slotId, slotName = pair[1], pair[2]
     local link = GetInventoryItemLink("player", slotId)
     if link then
@@ -288,6 +420,9 @@ local function collectEquipment()
         quality = GetInventoryItemQuality("player", slotId)
       end
       local icon, iconFileId = resolveIcon(itemId, link, slotId)
+      local tipLines = {}
+      local tipOk, tipRes = pcall(collectTooltipLines, slotId, link)
+      if tipOk and type(tipRes) == "table" then tipLines = tipRes end
       list[#list + 1] = {
         slot = slotName,
         item_id = itemId,
@@ -297,6 +432,7 @@ local function collectEquipment()
         icon = icon,
         icon_file_id = iconFileId,
         desc = itemDesc(link, itemSubType, equipLoc),
+        tooltip_lines = tipLines,
         enchant_id = nil,
         gems = {},
         transmog = collectSlotTransmog(slotId),
@@ -321,6 +457,467 @@ local function collectEquipment()
   return list
 end
 
+local function invSlotIdToName()
+  local m = {}
+  for _, pair in ipairs(getSlotMap()) do
+    m[pair[1]] = pair[2]
+  end
+  return m
+end
+
+local function itemBriefById(itemId)
+  if not itemId or itemId <= 0 then return nil end
+  if C_Item and C_Item.RequestLoadItemDataByID then
+    pcall(C_Item.RequestLoadItemDataByID, itemId)
+  end
+  local name, quality, iconFileId
+  if C_Item and C_Item.GetItemNameByID then
+    local ok, n = pcall(C_Item.GetItemNameByID, itemId)
+    if ok then name = n end
+  end
+  if C_Item and C_Item.GetItemQualityByID then
+    local ok, q = pcall(C_Item.GetItemQualityByID, itemId)
+    if ok then quality = q end
+  end
+  if C_Item and C_Item.GetItemIconByID then
+    local ok, ic = pcall(C_Item.GetItemIconByID, itemId)
+    if ok and type(ic) == "number" then iconFileId = ic end
+  end
+  if (not name or name == "") and itemInfo then
+    local n, _, q = itemInfo(itemId)
+    name = name or n
+    quality = quality or q
+  end
+  return {
+    item_id = itemId,
+    name = name,
+    quality = quality,
+    icon_file_id = iconFileId,
+  }
+end
+
+-- 装备配置方案（C_EquipmentSet；无限角色面板装备管理）
+local function collectEquipmentSets()
+  local list = {}
+  if not C_EquipmentSet then return list end
+  local ids
+  if C_EquipmentSet.GetEquipmentSetIDs then
+    local ok, v = pcall(C_EquipmentSet.GetEquipmentSetIDs)
+    if ok then ids = v end
+  end
+  if type(ids) ~= "table" then return list end
+  local slotMap = invSlotIdToName()
+  for _, setId in ipairs(ids) do
+    local name, iconFileID, isEquipped
+    if C_EquipmentSet.GetEquipmentSetInfo then
+      local ok, n, icon, _id, equipped = pcall(C_EquipmentSet.GetEquipmentSetInfo, setId)
+      if ok then
+        name, iconFileID, isEquipped = n, icon, equipped
+      end
+    end
+    local items = {}
+    local itemIDs
+    if C_EquipmentSet.GetItemIDs then
+      local ok, v = pcall(C_EquipmentSet.GetItemIDs, setId)
+      if ok then itemIDs = v end
+    end
+    if type(itemIDs) == "table" then
+      for invSlot, itemId in pairs(itemIDs) do
+        local slotName = slotMap[invSlot]
+        if slotName and type(itemId) == "number" and itemId > 0 then
+          local brief = itemBriefById(itemId) or { item_id = itemId }
+          brief.slot = slotName
+          items[#items + 1] = brief
+        end
+      end
+    end
+    list[#list + 1] = {
+      id = setId,
+      name = name or ("方案 " .. tostring(setId)),
+      icon_file_id = iconFileID,
+      is_equipped = isEquipped and true or false,
+      items = items,
+    }
+  end
+  return list
+end
+
+local function tipLinesFromTooltipData(data)
+  local lines = {}
+  if not data or not data.lines then return lines end
+  for _, line in ipairs(data.lines) do
+    local left = line.leftText and tostring(line.leftText) or ""
+    local right = line.rightText and tostring(line.rightText) or ""
+    if left ~= "" or right ~= "" then
+      local row = { left = left, right = right }
+      local c = rgb255(line.leftColor)
+      if c then row.color = c end
+      lines[#lines + 1] = row
+    end
+  end
+  return lines
+end
+
+-- 被动天赋的 Spell tip 经常只剩「被动」二字，不算完整
+local function tipLooksIncomplete(lines, talentName)
+  if not lines or #lines == 0 then return true end
+  local meaningful = 0
+  for _, ln in ipairs(lines) do
+    local t = (ln.left or ""):gsub("%s+", "")
+    if t ~= "" and t ~= "被动" and t ~= "Passive"
+      and t ~= (talentName or "")
+      and not t:find("^等级")
+      and not t:find("^Rank") then
+      meaningful = meaningful + 1
+    end
+  end
+  return meaningful == 0
+end
+
+local function appendDescLine(lines, desc)
+  if type(desc) ~= "string" or desc == "" then return end
+  local trimmed = desc:gsub("^%s+", ""):gsub("%s+$", "")
+  if trimmed == "" or trimmed == "被动" or trimmed == "Passive" then return end
+  for _, ln in ipairs(lines) do
+    if (ln.left or "") == trimmed then return end
+  end
+  lines[#lines + 1] = { left = trimmed }
+end
+
+local function resolveTalentDescription(entryID, rank, def, spellID)
+  local desc
+  local r = tonumber(rank) or 1
+  if r < 1 then r = 1 end
+
+  if entryID and C_Traits and C_Traits.GetTraitDescription then
+    local ok, d = pcall(C_Traits.GetTraitDescription, entryID, r)
+    if ok and type(d) == "string" and d ~= "" then desc = d end
+  end
+  if (not desc or desc == "") and def and type(def.overrideDescription) == "string" and def.overrideDescription ~= "" then
+    desc = def.overrideDescription
+  end
+  if (not desc or desc == "") and spellID then
+    if C_Spell and C_Spell.RequestLoadSpellData then
+      pcall(C_Spell.RequestLoadSpellData, spellID)
+    end
+    if C_Spell and C_Spell.GetSpellDescription then
+      local ok, d = pcall(C_Spell.GetSpellDescription, spellID)
+      if ok and type(d) == "string" and d ~= "" then desc = d end
+    end
+    if (not desc or desc == "") and GetSpellDescription then
+      local ok, d = pcall(GetSpellDescription, spellID)
+      if ok and type(d) == "string" and d ~= "" then desc = d end
+    end
+  end
+  if desc == "被动" or desc == "Passive" then desc = nil end
+  return desc
+end
+
+local function collectTalentTooltipLines(entryID, rank, spellID, talentName, def)
+  local lines = {}
+  local r = tonumber(rank) or 1
+  if r < 1 then r = 1 end
+
+  -- 1) 天赋条目 tip（含完整被动说明）
+  if entryID and C_TooltipInfo and C_TooltipInfo.GetTraitEntry then
+    local ok, d = pcall(C_TooltipInfo.GetTraitEntry, entryID, r)
+    if ok then lines = tipLinesFromTooltipData(d) end
+  end
+
+  -- 2) 法术 tip（主动技能更完整；被动常只有「被动」）
+  if tipLooksIncomplete(lines, talentName) and spellID and C_TooltipInfo then
+    if C_TooltipInfo.GetSpellByID then
+      local ok, d = pcall(C_TooltipInfo.GetSpellByID, spellID)
+      if ok then
+        local spellLines = tipLinesFromTooltipData(d)
+        if not tipLooksIncomplete(spellLines, talentName) then
+          lines = spellLines
+        elseif #lines == 0 then
+          lines = spellLines
+        end
+      end
+    end
+  end
+
+  -- 3) GameTooltip 扫描
+  if tipLooksIncomplete(lines, talentName) then
+    local tip = _G.WGATooltipScanner
+    if not tip and CreateFrame then
+      local ok, frame = pcall(CreateFrame, "GameTooltip", "WGATooltipScanner", UIParent, "GameTooltipTemplate")
+      if ok then
+        tip = frame
+        tip:SetOwner(UIParent, "ANCHOR_NONE")
+        _G.WGATooltipScanner = tip
+      end
+    end
+    if tip then
+      tip:ClearLines()
+      local setOk = false
+      if spellID and tip.SetSpellByID then
+        setOk = pcall(function() tip:SetSpellByID(spellID) end)
+      end
+      if setOk then
+        local scanned = {}
+        local n = tip:NumLines() or 0
+        for i = 1, n do
+          local leftFs = _G["WGATooltipScannerTextLeft" .. i]
+          local rightFs = _G["WGATooltipScannerTextRight" .. i]
+          local left = leftFs and leftFs:GetText() or ""
+          local right = rightFs and rightFs:GetText() or ""
+          local color = nil
+          if leftFs and leftFs.GetTextColor then
+            local rr, gg, bb = leftFs:GetTextColor()
+            color = rgb255({ r = rr, g = gg, b = bb })
+          end
+          if left ~= "" or right ~= "" then
+            local row = { left = left or "", right = right or "" }
+            if color then row.color = color end
+            scanned[#scanned + 1] = row
+          end
+        end
+        if not tipLooksIncomplete(scanned, talentName) then
+          lines = scanned
+        elseif #lines == 0 then
+          lines = scanned
+        end
+      end
+    end
+  end
+
+  -- 4) 描述文本补全（解决只显示「被动」）
+  local desc = resolveTalentDescription(entryID, r, def, spellID)
+  if tipLooksIncomplete(lines, talentName) then
+    if talentName and talentName ~= "" then
+      lines = { { left = talentName, color = { r = 255, g = 210, b = 0 } } }
+    else
+      lines = {}
+    end
+    if desc then
+      appendDescLine(lines, desc)
+    end
+  else
+    appendDescLine(lines, desc)
+  end
+
+  return lines, desc
+end
+
+local function talentEntryMeta(configID, entryID, rank)
+  local name, spellID, iconFileId, tipLines, description
+  tipLines = {}
+  if not (entryID and C_Traits and C_Traits.GetEntryInfo) then
+    return name, spellID, iconFileId, tipLines, description
+  end
+  local ok, entry = pcall(C_Traits.GetEntryInfo, configID, entryID)
+  if not (ok and entry and entry.definitionID and C_Traits.GetDefinitionInfo) then
+    return name, spellID, iconFileId, tipLines, description
+  end
+  local ok2, def = pcall(C_Traits.GetDefinitionInfo, entry.definitionID)
+  if not (ok2 and def) then return name, spellID, iconFileId, tipLines, description end
+  name = def.overrideName
+  spellID = def.spellID
+  if (not name or name == "") and spellID and C_Spell and C_Spell.GetSpellName then
+    local ok3, sn = pcall(C_Spell.GetSpellName, spellID)
+    if ok3 then name = sn end
+  end
+  if (not iconFileId) and def.overrideIcon then
+    iconFileId = def.overrideIcon
+  end
+  if spellID and C_Spell and C_Spell.GetSpellTexture then
+    local ok4, tex = pcall(C_Spell.GetSpellTexture, spellID)
+    if ok4 and type(tex) == "number" then
+      iconFileId = tex
+    end
+  end
+  local okTip, tipRes, descRes = pcall(collectTalentTooltipLines, entryID, rank, spellID, name, def)
+  if okTip and type(tipRes) == "table" then
+    tipLines = tipRes
+    description = descRes
+  end
+  return name, spellID, iconFileId, tipLines, description
+end
+
+-- Forever：一棵 Camelot 树里通常有 3 个天赋页（Arms/Fury/…），用 group 区分
+local function collectActiveTalentDetails()
+  local out = { config_name = nil, tree_id = nil, tabs = {}, trees = {}, nodes = {} }
+  if not (C_Traits and C_ClassTalents and C_ClassTalents.GetActiveConfigID) then
+    return out
+  end
+  local configID = C_ClassTalents.GetActiveConfigID()
+  if not configID then return out end
+  local ok, configInfo = pcall(C_Traits.GetConfigInfo, configID)
+  if not (ok and type(configInfo) == "table") then return out end
+  out.config_name = configInfo.name
+
+  local tabByGroup = {}
+  local tabList = {}
+  for _, treeID in ipairs(configInfo.treeIDs or {}) do
+    out.tree_id = out.tree_id or treeID
+    local spentTotal = 0
+    if C_Traits.GetTreeCurrencyInfo then
+      local ok2, currencies = pcall(C_Traits.GetTreeCurrencyInfo, configID, treeID, false)
+      if ok2 and type(currencies) == "table" then
+        for _, c in ipairs(currencies) do
+          spentTotal = spentTotal + (tonumber(c.spent) or 0)
+        end
+      end
+    end
+    out.trees[#out.trees + 1] = { tree_id = treeID, points_spent = spentTotal }
+
+    if C_Traits.GetGroupDisplayInfoByTreeID then
+      local okg, groups = pcall(C_Traits.GetGroupDisplayInfoByTreeID, treeID)
+      if okg and type(groups) == "table" then
+        for _, g in ipairs(groups) do
+          local gid = g.groupID or g.ID or g.traitNodeGroupID
+          if gid then
+            local tab = {
+              group_id = gid,
+              name = g.displayName or g.name or ("页 " .. tostring(gid)),
+              icon_file_id = g.icon,
+              order_index = tonumber(g.orderIndex) or (#tabList + 1),
+              points_spent = 0,
+              nodes = {},
+            }
+            tabByGroup[gid] = tab
+            tabList[#tabList + 1] = tab
+          end
+        end
+      end
+    end
+
+    -- 各页已投入点数
+    if C_Traits.GetGroupCurrencyInfo and #tabList > 0 then
+      local gids = {}
+      for _, t in ipairs(tabList) do gids[#gids + 1] = t.group_id end
+      local okc, infos = pcall(C_Traits.GetGroupCurrencyInfo, configID, gids)
+      if okc and type(infos) == "table" then
+        for _, info in ipairs(infos) do
+          local gid = info.traitNodeGroupID or info.groupID
+          local tab = gid and tabByGroup[gid]
+          if tab and type(info.currencyInfos) == "table" then
+            local spent = 0
+            for _, c in ipairs(info.currencyInfos) do
+              spent = spent + (tonumber(c.spent) or 0)
+            end
+            tab.points_spent = spent
+          end
+        end
+      end
+    end
+
+    if C_Traits.GetTreeNodes then
+      local ok3, nodeIDs = pcall(C_Traits.GetTreeNodes, treeID)
+      if ok3 and type(nodeIDs) == "table" then
+        for _, nodeID in ipairs(nodeIDs) do
+          local ok4, nodeInfo = pcall(C_Traits.GetNodeInfo, configID, nodeID)
+          if ok4 and type(nodeInfo) == "table" and (tonumber(nodeInfo.ID) or 0) > 0 then
+            local rank = tonumber(nodeInfo.currentRank) or 0
+            local maxRank = tonumber(nodeInfo.maxRanks) or 0
+            local entryID = nodeInfo.activeEntry and nodeInfo.activeEntry.entryID
+            if (not entryID) and type(nodeInfo.entryIDs) == "table" then
+              entryID = nodeInfo.entryIDs[1]
+            end
+            -- 取描述用至少 1 级，避免未学节点 rank=0 时 GetTraitDescription 空
+            local tipRank = rank > 0 and rank or math.max(maxRank, 1)
+            local entryName, spellID, iconFileId, tipLines, description =
+              talentEntryMeta(configID, entryID, tipRank)
+            -- 归属哪个天赋页：groupIDs 里匹配展示组（页 id 可能不在第一位）
+            local tabGroupId
+            if type(nodeInfo.groupIDs) == "table" then
+              for _, gid in ipairs(nodeInfo.groupIDs) do
+                if tabByGroup[gid] then
+                  tabGroupId = gid
+                  break
+                end
+              end
+            end
+            local node = {
+              node_id = nodeID,
+              tree_id = treeID,
+              group_id = tabGroupId,
+              pos_x = tonumber(nodeInfo.posX) or 0,
+              pos_y = tonumber(nodeInfo.posY) or 0,
+              rank = rank,
+              max_rank = maxRank,
+              name = entryName,
+              spell_id = spellID,
+              icon_file_id = iconFileId,
+              tooltip_lines = tipLines or {},
+              description = description,
+            }
+            out.nodes[#out.nodes + 1] = node
+            if tabGroupId and tabByGroup[tabGroupId] then
+              local tnodes = tabByGroup[tabGroupId].nodes
+              tnodes[#tnodes + 1] = node
+            end
+          end
+        end
+      end
+    end
+  end
+
+  table.sort(tabList, function(a, b)
+    return (a.order_index or 0) < (b.order_index or 0)
+  end)
+  out.tabs = tabList
+  return out
+end
+
+local function collectTalentGroups()
+  local groups = {}
+  local num = 1
+  if C_SpecializationInfo and C_SpecializationInfo.GetNumSpecGroups then
+    local ok, n = pcall(C_SpecializationInfo.GetNumSpecGroups)
+    if ok and type(n) == "number" and n > 0 then num = n end
+  elseif type(GetNumSpecGroups) == "function" then
+    local ok, n = pcall(GetNumSpecGroups)
+    if ok and type(n) == "number" and n > 0 then num = n end
+  end
+  -- 双天赋最多两套；装备配置方案不在此限制
+  if num > 2 then num = 2 end
+
+  local active = 1
+  if C_SpecializationInfo and C_SpecializationInfo.GetActiveSpecGroup then
+    local ok, a = pcall(C_SpecializationInfo.GetActiveSpecGroup)
+    if ok and type(a) == "number" and a > 0 then active = a end
+  elseif type(GetActiveSpecGroup) == "function" then
+    local ok, a = pcall(GetActiveSpecGroup)
+    if ok and type(a) == "number" and a > 0 then active = a end
+  end
+
+  local activeDetails = collectActiveTalentDetails()
+
+  for i = 1, num do
+    local label = (i == 1) and "主天赋" or "副天赋"
+    if C_SpecializationInfo and C_SpecializationInfo.GetSpecialization then
+      local ok, specIdx = pcall(C_SpecializationInfo.GetSpecialization, false, false, i)
+      if ok and specIdx and C_SpecializationInfo.GetSpecializationInfo then
+        local ok2, _id, sn = pcall(C_SpecializationInfo.GetSpecializationInfo, specIdx, false, false, i)
+        if ok2 and type(sn) == "string" and sn ~= "" then
+          label = sn
+        end
+      end
+    end
+    local g = {
+      index = i,
+      name = label,
+      active = (i == active),
+      trees = {},
+      tabs = {},
+      nodes = {},
+    }
+    if i == active then
+      g.config_name = activeDetails.config_name
+      g.tree_id = activeDetails.tree_id
+      g.trees = activeDetails.trees or {}
+      g.tabs = activeDetails.tabs or {}
+      g.nodes = activeDetails.nodes or {}
+    end
+    groups[#groups + 1] = g
+  end
+  return groups
+end
+
 local function collectTalents()
   local loadout = ""
   local specId = nil
@@ -329,19 +926,178 @@ local function collectTalents()
     if idx and GetSpecializationInfo then
       specId = select(1, GetSpecializationInfo(idx))
     end
+  elseif C_SpecializationInfo and C_SpecializationInfo.GetSpecialization then
+    local ok, idx = pcall(C_SpecializationInfo.GetSpecialization)
+    if ok and idx and C_SpecializationInfo.GetSpecializationInfo then
+      local ok2, sid = pcall(C_SpecializationInfo.GetSpecializationInfo, idx)
+      if ok2 then specId = sid end
+    end
   end
-  -- 零售导出串 API（无限若可用则填）
   if C_Traits and C_ClassTalents and C_ClassTalents.GetActiveConfigID then
     local configID = C_ClassTalents.GetActiveConfigID()
     if configID and C_Traits.GenerateImportLoadout then
-      -- 不同版本 API 名可能不同；失败则留空
       local ok, s = pcall(function()
         return C_Traits.GenerateImportLoadout(configID)
       end)
       if ok and type(s) == "string" then loadout = s end
     end
   end
-  return { loadout_string = loadout, spec_id = specId }
+  return {
+    loadout_string = loadout,
+    spec_id = specId,
+    groups = collectTalentGroups(),
+  }
+end
+
+-- 公会 + 服务器层级（无限服二级用 PVP/PVE 等；读不出则 UNKNOWN）
+local function detectFlavor()
+  -- 本插件面向无限服；有官方工程 ID 时再细分
+  if type(WOW_PROJECT_ID) == "number" then
+    if WOW_PROJECT_MAINLINE and WOW_PROJECT_ID == WOW_PROJECT_MAINLINE then
+      return "retail"
+    end
+    if WOW_PROJECT_CLASSIC and WOW_PROJECT_ID == WOW_PROJECT_CLASSIC then
+      return "classic"
+    end
+    if WOW_PROJECT_BURNING_CRUSADE_CLASSIC and WOW_PROJECT_ID == WOW_PROJECT_BURNING_CRUSADE_CLASSIC then
+      return "classic"
+    end
+    if WOW_PROJECT_WRATH_CLASSIC and WOW_PROJECT_ID == WOW_PROJECT_WRATH_CLASSIC then
+      return "classic"
+    end
+    if WOW_PROJECT_CATACLYSM_CLASSIC and WOW_PROJECT_ID == WOW_PROJECT_CATACLYSM_CLASSIC then
+      return "classic"
+    end
+  end
+  return "forever"
+end
+
+local function detectRegionKey(flavor)
+  -- 无限服：尝试从 realm 名 / 自定义 API 推断 PVP/PVE
+  local realm = (GetRealmName and GetRealmName()) or ""
+  local upper = string.upper(tostring(realm))
+  if string.find(upper, "PVP", 1, true) then
+    return "PVP"
+  end
+  if string.find(upper, "PVE", 1, true) then
+    return "PVE"
+  end
+  if string.find(upper, "RP", 1, true) then
+    return "RP"
+  end
+  -- 部分客户端可能有 GetRealmInfo / C_RealmInfo
+  if type(GetRealmInfo) == "function" then
+    local ok, a, b, c = pcall(GetRealmInfo)
+    if ok then
+      local blob = string.upper(table.concat({ tostring(a or ""), tostring(b or ""), tostring(c or "") }, " "))
+      if string.find(blob, "PVP", 1, true) then return "PVP" end
+      if string.find(blob, "PVE", 1, true) then return "PVE" end
+    end
+  end
+  if flavor == "forever" then
+    return "UNKNOWN"
+  end
+  return "UNKNOWN"
+end
+
+local function collectGuild(realmName)
+  -- 未入会直接跳过（部分客户端无 IsInGuild 则继续尝试）
+  if type(IsInGuild) == "function" then
+    local okIn, inGuild = pcall(IsInGuild)
+    if okIn and inGuild == false then
+      return nil
+    end
+  end
+  -- 触发名册刷新；多数客户端本地已有缓存，GetGuildInfo 仍可读
+  if type(GuildRoster) == "function" then
+    pcall(GuildRoster)
+  elseif C_GuildInfo and type(C_GuildInfo.GuildRoster) == "function" then
+    pcall(C_GuildInfo.GuildRoster)
+  end
+
+  -- Forever: GetGuildInfo("player") → name, rankName, rankIndex, realm（C_GuildInfo 无自己公会名）
+  local gname, grank, grankIndex, guildRealm
+  if type(GetGuildInfo) == "function" then
+    local ok, a, b, c, d = pcall(GetGuildInfo, "player")
+    if ok and type(a) == "string" and a ~= "" then
+      gname, grank, grankIndex, guildRealm = a, b, c, d
+    end
+    if (not gname or gname == "") then
+      ok, a, b, c, d = pcall(GetGuildInfo)
+      if ok and type(a) == "string" and a ~= "" then
+        gname, grank, grankIndex, guildRealm = a, b, c, d
+      end
+    end
+  end
+  -- 兜底：与 Shift 看人一样，扫自己单位 tip 上的 <公会名>
+  if (not gname or gname == "") then
+    local tipName = "WGAGuildTipScan"
+    local tip = _G[tipName]
+    if not tip then
+      local ok, frame = pcall(CreateFrame, "GameTooltip", tipName, UIParent, "GameTooltipTemplate")
+      if ok then tip = frame end
+    end
+    if tip then
+      tip:SetOwner(UIParent, "ANCHOR_NONE")
+      tip:ClearLines()
+      local setOk = pcall(function() tip:SetUnit("player") end)
+      if setOk then
+        local n = tip:NumLines() or 0
+        for i = 1, n do
+          local fs = _G[tipName .. "TextLeft" .. i]
+          local text = fs and fs:GetText()
+          if type(text) == "string" then
+            -- 常见格式：<公会名> 或 <公会名>（会阶）
+            local m = text:match("^%s*<([^>]+)>")
+            if m and m ~= "" then
+              gname = m
+              break
+            end
+          end
+        end
+      end
+      tip:Hide()
+    end
+  end
+  if (not gname or gname == "") and type(GetGuildName) == "function" then
+    local ok, a = pcall(GetGuildName)
+    if ok and type(a) == "string" and a ~= "" then
+      gname = a
+    end
+  end
+  if not gname or gname == "" then
+    return nil
+  end
+
+  local isLeader = false
+  if type(IsGuildLeader) == "function" then
+    local ok, v = pcall(IsGuildLeader)
+    if ok and v then isLeader = true end
+  elseif type(IsGuildMaster) == "function" then
+    local ok, v = pcall(IsGuildMaster)
+    if ok and v then isLeader = true end
+  end
+  -- rankIndex 0 通常是会长
+  if (not isLeader) and type(grankIndex) == "number" and grankIndex == 0 then
+    isLeader = true
+  end
+
+  local flavor = detectFlavor()
+  local realm = ""
+  if type(guildRealm) == "string" and guildRealm ~= "" then
+    realm = guildRealm
+  else
+    realm = realmName or ((GetNormalizedRealmName and GetNormalizedRealmName()) or (GetRealmName and GetRealmName()) or "")
+  end
+  return {
+    name = gname,
+    rank = grank,
+    rank_index = grankIndex,
+    is_leader = isLeader and true or false,
+    flavor = flavor,
+    region_key = detectRegionKey(flavor),
+    realm_name = realm,
+  }
 end
 
 local function collectLockouts()
@@ -509,7 +1265,9 @@ function WGA.CaptureSnapshot(announceOrOpts)
       level = level,
       item_level = getItemLevel(),
     },
+    guild = collectGuild(realm),
     equipment = collectEquipment(),
+    equipment_sets = collectEquipmentSets(),
     talents = collectTalents(),
     lockouts = collectLockouts(),
     professions = collectProfessions(),
@@ -543,13 +1301,19 @@ function WGA.CaptureSnapshot(announceOrOpts)
         end
       end
     end
+    local g = snap.guild
+    local gPart = (g and g.name) and (" / 公会 " .. tostring(g.name) .. (g.is_leader and "·会长" or "")) or " / 无公会"
+    local flushHint = opts.will_reload
+      and "即将刷新界面写入磁盘。"
+      or "数据仍在内存；桌面端要读到需 /reload（或 /wga flush on 后手动快照）。"
     print(string.format(
-      "|cff33ff99WGA|r v%s 已快照 %s-%s（装备 %d / 幻化 %d / CD %d / 专业 %d / 任务 %d）。桌面端可读 SavedVariables。",
+      "|cff33ff99WGA|r v%s 已快照 %s-%s%s（装备 %d / 幻化 %d / CD %d / 专业 %d / 任务 %d）。%s",
       tostring(WGA.VERSION or "?"),
-      tostring(name), tostring(realm),
+      tostring(name), tostring(realm), gPart,
       eqCount, tmCount,
       #(snap.lockouts or {}), #(snap.professions or {}),
-      #(snap.quests or {})
+      #(snap.quests or {}),
+      flushHint
     ))
   end
   return snap

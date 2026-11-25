@@ -22,9 +22,20 @@ func main() {
 
 	pool, err := db.Connect(ctx, cfg.DatabaseURL, cfg.DBMaxConns)
 	if err != nil {
-		log.Fatalf("database: %v\nHint: install PostgreSQL locally, create db/user wga, run server/migrations/000001_init.up.sql", err)
+		log.Fatalf("database: %v\nHint: install PostgreSQL locally, create db/user wga, run server/migrations/*.up.sql", err)
 	}
 	defer pool.Close()
+
+	for _, name := range cfg.AdminUsernames {
+		tag, err := pool.Exec(ctx, `UPDATE users SET is_admin = true WHERE username = $1 AND is_admin = false`, name)
+		if err != nil {
+			log.Printf("admin seed %q: %v", name, err)
+			continue
+		}
+		if tag.RowsAffected() > 0 {
+			log.Printf("admin seed: marked %q as platform admin", name)
+		}
+	}
 
 	tokens := auth.NewTokenService(cfg.JWTSecret, cfg.JWTTTL)
 	srv := httpapi.New(cfg, pool, tokens)

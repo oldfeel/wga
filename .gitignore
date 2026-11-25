@@ -21,7 +21,9 @@ npm-debug.log*
 server/bin/
 server/wga-server
 server/wga-server.exe
+server/wga-server.exe~
 *.exe
+*.exe~
 *.test
 coverage.out
 

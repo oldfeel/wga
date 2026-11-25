@@ -9,6 +9,11 @@ export type EquipItem = {
   icon?: string;
   icon_file_id?: number;
   desc?: string;
+  tooltip_lines?: Array<{
+    left?: string;
+    right?: string;
+    color?: { r?: number; g?: number; b?: number };
+  }>;
   transmog?: {
     name?: string;
     source_id?: number;
@@ -36,6 +41,8 @@ export const SLOT_LABEL: Record<string, string> = {
   SHOULDER: "肩部",
   BACK: "背部",
   CHEST: "胸部",
+  SHIRT: "衬衣",
+  TABARD: "战袍",
   WRIST: "手腕",
   HANDS: "手",
   WAIST: "腰部",
@@ -47,6 +54,7 @@ export const SLOT_LABEL: Record<string, string> = {
   TRINKET2: "饰品",
   MAINHAND: "主手",
   OFFHAND: "副手",
+  RELIC: "圣物",
 };
 
 /** 纸娃娃左侧（贴角色左边） */
@@ -56,6 +64,8 @@ export const ARMORY_LEFT = [
   "SHOULDER",
   "BACK",
   "CHEST",
+  "SHIRT",
+  "TABARD",
   "WRIST",
 ] as const;
 
@@ -71,8 +81,8 @@ export const ARMORY_RIGHT = [
   "TRINKET2",
 ] as const;
 
-/** 底部武器栏 */
-export const ARMORY_WEAPONS = ["MAINHAND", "OFFHAND"] as const;
+/** 底部：主手 / 副手 / 圣物（无限神像·圣契·图腾） */
+export const ARMORY_WEAPONS = ["MAINHAND", "OFFHAND", "RELIC"] as const;
 
 const QUALITY_COLORS = [
   "#9d9d9d",
@@ -118,6 +128,76 @@ export function iconUrlCandidates(icon?: string | null): string[] {
 export function qualityColor(q?: number | null) {
   if (q == null || q < 0) return "#2c3644";
   return QUALITY_COLORS[q] || "#2c3644";
+}
+
+function escapeHtml(s: string) {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/** 解析魔兽 UI 转义：|cAARRGGBB…|r、|T…|t、|H…|h…|h、|n */
+export function wowTextToHtml(input: string): string {
+  if (!input) return "";
+  const s = String(input);
+  let i = 0;
+  let out = "";
+  while (i < s.length) {
+    if (s[i] === "|" && s[i + 1] === "|") {
+      out += "|";
+      i += 2;
+      continue;
+    }
+    if (s.startsWith("|c", i) && /^[0-9a-fA-F]{8}/.test(s.slice(i + 2, i + 10))) {
+      const hex = s.slice(i + 2, i + 10);
+      i += 10;
+      const end = s.indexOf("|r", i);
+      const contentEnd = end === -1 ? s.length : end;
+      const inner = wowTextToHtml(s.slice(i, contentEnd));
+      const r = parseInt(hex.slice(2, 4), 16);
+      const g = parseInt(hex.slice(4, 6), 16);
+      const b = parseInt(hex.slice(6, 8), 16);
+      out += `<span style="color:rgb(${r},${g},${b})">${inner}</span>`;
+      i = end === -1 ? s.length : end + 2;
+      continue;
+    }
+    if (s.startsWith("|r", i)) {
+      i += 2;
+      continue;
+    }
+    if (s.startsWith("|T", i)) {
+      const t = s.indexOf("|t", i);
+      i = t === -1 ? s.length : t + 2;
+      continue;
+    }
+    if (s.startsWith("|H", i)) {
+      const h1 = s.indexOf("|h", i);
+      if (h1 === -1) {
+        i += 2;
+        continue;
+      }
+      const h2 = s.indexOf("|h", h1 + 2);
+      if (h2 === -1) {
+        i = h1 + 2;
+        continue;
+      }
+      out += wowTextToHtml(s.slice(h1 + 2, h2));
+      i = h2 + 2;
+      continue;
+    }
+    if (s.startsWith("|n", i)) {
+      out += "<br/>";
+      i += 2;
+      continue;
+    }
+    const next = s.indexOf("|", i);
+    const chunk = next === -1 ? s.slice(i) : s.slice(i, next);
+    out += escapeHtml(chunk);
+    i = next === -1 ? s.length : next;
+  }
+  return out;
 }
 
 export function transmogText(tm?: EquipItem["transmog"]) {

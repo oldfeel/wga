@@ -1,17 +1,19 @@
-//! 装备图标解析：CDN 文件名 / 物品对照表 / fileId→BLP→PNG 本地缓存
+//! 装备图标：仅本地 CASC（fileId → BLP → PNG 缓存）
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use serde::Serialize;
-use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::time::Instant;
+
+use crate::casc_local;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct IconSrc {
-    /// CDN URL 或 data:image/png;base64,...
-    pub src: String,
+    /// PNG 的 base64（不含 data: 前缀，前端转 Blob）
+    pub b64: String,
     pub source: String,
+    pub ms: u64,
 }
 
 fn icons_dir() -> PathBuf {
@@ -23,32 +25,8 @@ fn icons_dir() -> PathBuf {
     dir
 }
 
-fn item_name_map() -> &'static HashMap<String, String> {
-    static MAP: OnceLock<HashMap<String, String>> = OnceLock::new();
-    MAP.get_or_init(|| {
-        serde_json::from_str(include_str!("../item-icon-cache.json")).unwrap_or_default()
-    })
-}
-
-fn is_icon_name(s: &str) -> bool {
-    !s.is_empty()
-        && !s.chars().all(|c| c.is_ascii_digit())
-        && !s.to_ascii_lowercase().starts_with("invtype_")
-}
-
-fn cdn_url(name: &str) -> String {
-    format!(
-        "https://render.worldofwarcraft.com/us/icons/56/{}.jpg",
-        name.to_ascii_lowercase()
-    )
-}
-
 fn cached_png_path(file_id: u32) -> PathBuf {
     icons_dir().join(format!("{file_id}.png"))
-}
-
-fn png_to_data_url(png: &[u8]) -> String {
-    format!("data:image/png;base64,{}", B64.encode(png))
 }
 
 fn blp_bytes_to_png(blp: &[u8]) -> Result<Vec<u8>, String> {
@@ -64,82 +42,50 @@ fn blp_bytes_to_png(blp: &[u8]) -> Result<Vec<u8>, String> {
     Ok(out.into_inner())
 }
 
-async fn fetch_blp(file_id: u32) -> Result<Vec<u8>, String> {
-    let client = reqwest::Client::builder()
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) WGA-Sync/0.1")
-        .timeout(std::time::Duration::from_secs(12))
-        .connect_timeout(std::time::Duration::from_secs(4))
-        .build()
-        .map_err(|e| e.to_string())?;
-    // 社区 CASC 镜像：零售/共用 fileId 可用；无限私有资源可能 404
-    let url = format!("https://wago.tools/api/casc/{file_id}");
-    let resp = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !resp.status().is_success() {
-        return Err(format!("casc http {}", resp.status()));
-    }
-    let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
-    if bytes.len() < 4 {
-        return Err("empty casc payload".into());
-    }
-    let mag = &bytes[0..4];
-    if mag != b"BLP2" && mag != b"BLP1" && mag != b"BLP0" {
-        return Err("not a BLP payload".into());
-    }
-    Ok(bytes.to_vec())
-}
-
-fn load_cached_data_url(file_id: u32) -> Option<IconSrc> {
+fn load_cached(file_id: u32) -> Option<Vec<u8>> {
     let path = cached_png_path(file_id);
     let png = fs::read(&path).ok()?;
-    if png.is_empty() {
+    if png.len() < 8 || !png.starts_with(&[0x89, b'P', b'N', b'G']) {
         return None;
     }
-    Some(IconSrc {
-        src: png_to_data_url(&png),
-        source: "cache".into(),
-    })
+    Some(png)
 }
 
-/// 解析单个装备图标（优先文件名 CDN → 物品对照表 → fileId 拉 BLP 缓存）
+/// 仅按 icon_file_id 从本地 CASC 解析（PNG 磁盘缓存加速二次加载）
 pub async fn resolve_equip_icon(
-    icon: Option<String>,
+    _icon: Option<String>,
     icon_file_id: Option<u32>,
-    item_id: Option<i64>,
-) -> Option<IconSrc> {
-    if let Some(name) = icon.as_deref().map(str::trim).filter(|s| is_icon_name(s)) {
-        return Some(IconSrc {
-            src: cdn_url(name),
-            source: "cdn".into(),
+    _item_id: Option<i64>,
+) -> Result<IconSrc, String> {
+    let t0 = Instant::now();
+    let file_id = icon_file_id
+        .filter(|x| *x > 0)
+        .ok_or_else(|| "missing icon_file_id".to_string())?;
+
+    if let Some(png) = load_cached(file_id) {
+        let ms = t0.elapsed().as_millis() as u64;
+        eprintln!("[icon] {file_id} cache hit png={} ms={ms}", png.len());
+        return Ok(IconSrc {
+            b64: B64.encode(&png),
+            source: "cache".into(),
+            ms,
         });
     }
 
-    if let Some(id) = item_id.filter(|x| *x > 0) {
-        if let Some(name) = item_name_map().get(&id.to_string()) {
-            if is_icon_name(name) {
-                return Some(IconSrc {
-                    src: cdn_url(name),
-                    source: "item_cache".into(),
-                });
-            }
-        }
-    }
-
-    let file_id = icon_file_id.filter(|x| *x > 0)?;
-    if let Some(hit) = load_cached_data_url(file_id) {
-        return Some(hit);
-    }
-
-    let blp = fetch_blp(file_id).await.ok()?;
-    let png = blp_bytes_to_png(&blp).ok()?;
-    let path = cached_png_path(file_id);
-    let _ = fs::write(&path, &png);
-    Some(IconSrc {
-        src: png_to_data_url(&png),
-        source: "file_id".into(),
+    eprintln!("[icon] {file_id} casc miss → read");
+    let blp = casc_local::read_blp_by_fdid(file_id).await?;
+    let png = blp_bytes_to_png(&blp)?;
+    let _ = fs::write(cached_png_path(file_id), &png);
+    let ms = t0.elapsed().as_millis() as u64;
+    eprintln!(
+        "[icon] {file_id} casc ok blp={} png={} ms={ms}",
+        blp.len(),
+        png.len()
+    );
+    Ok(IconSrc {
+        b64: B64.encode(&png),
+        source: "local_casc".into(),
+        ms,
     })
 }
 
@@ -149,7 +95,6 @@ mod tests {
 
     #[test]
     fn blp_sample_converts() {
-        // 可选：有网络时手工把 BLP 放到此测；无文件则跳过
         let sample = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/sample.blp");
         if !sample.exists() {
             return;
