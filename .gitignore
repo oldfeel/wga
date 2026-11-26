@@ -38,11 +38,13 @@ desktop/dist/
 # Build
 dist/
 build/
+*.tsbuildinfo
 
 # Local tooling / temp
 scripts/tools/
 scripts/_*.ps1
 scripts/_*.txt
 scripts/peek-sv-*.py
+desktop/scripts/peek-*.mjs
 desktop/src-tauri/icons/henry.png
 desktop/src-tauri/_casc_probe/
