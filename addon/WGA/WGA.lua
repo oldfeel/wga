@@ -6,7 +6,7 @@
 
 local ADDON_NAME = ...
 WGA = WGA or {}
-WGA.VERSION = "0.1.26"
+WGA.VERSION = "0.1.29"
 
 local DEFAULT_AUTO_MINUTES = 2
 local MIN_AUTO_MINUTES = 1

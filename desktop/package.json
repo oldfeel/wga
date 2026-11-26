@@ -11,11 +11,22 @@
     "tauri:build": "tauri build"
   },
   "dependencies": {
+    "@emotion/react": "11.14.0",
+    "@emotion/styled": "11.14.0",
+    "@mui/icons-material": "9.6.0",
+    "@mui/material": "9.6.0",
     "@tauri-apps/api": "^2.2.0",
-    "@tauri-apps/plugin-dialog": "^2.2.0"
+    "@tauri-apps/plugin-dialog": "^2.2.0",
+    "@wga/ui": "*",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "react-router-dom": "^7.1.1"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.2.0",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "@vitejs/plugin-react": "^4.3.4",
     "typescript": "^5.7.2",
     "vite": "^6.0.3"
   }

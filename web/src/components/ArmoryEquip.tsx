@@ -1,20 +1,22 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import Box from "@mui/material/Box";
 import {
   ARMORY_LEFT,
   ARMORY_RIGHT,
   ARMORY_WEAPONS,
+  RichTooltip,
   SLOT_LABEL,
+  buildEquipTipHtml,
   iconUrl,
   iconUrlCandidates,
   indexBySlot,
   isIconName,
   qualityColor,
-  resolveIconName,
   transmogText,
-  wowTextToHtml,
   type CharSummary,
   type EquipItem,
-} from "../lib/armory";
+} from "@wga/ui";
+import { resolveIconName } from "../lib/armory";
 
 function SlotIcon({ e }: { e?: EquipItem }) {
   const [src, setSrc] = useState<string | null>(() => iconUrl(e?.icon));
@@ -62,93 +64,6 @@ function SlotIcon({ e }: { e?: EquipItem }) {
   );
 }
 
-const QUALITY_LABEL = [
-  "粗糙",
-  "普通",
-  "优秀",
-  "精良",
-  "史诗",
-  "传说",
-  "神器",
-  "传家宝",
-];
-
-function EquipTooltip({ slot, e }: { slot: string; e: EquipItem }) {
-  const q = e.quality ?? 1;
-  const color = qualityColor(q);
-  const tm = transmogText(e.transmog);
-  const lines = e.tooltip_lines || [];
-  return (
-    <div className="item-tip-panel">
-      {!lines.length ? (
-        <div className="item-tip-name" style={{ color }}>
-          {e.name || "未知物品"}
-        </div>
-      ) : null}
-      {lines.length
-        ? lines.map((ln, i) => {
-            const c = ln.color;
-            const style =
-              c && c.r != null
-                ? { color: `rgb(${c.r},${c.g ?? 0},${c.b ?? 0})` }
-                : undefined;
-            const left = ln.left || "";
-            const right = ln.right || "";
-            if (!left && !right) {
-              return <div key={i} className="item-tip-blank" />;
-            }
-            if (right) {
-              return (
-                <div key={i} className="item-tip-row" style={style}>
-                  <span dangerouslySetInnerHTML={{ __html: wowTextToHtml(left) }} />
-                  <span dangerouslySetInnerHTML={{ __html: wowTextToHtml(right) }} />
-                </div>
-              );
-            }
-            return (
-              <div
-                key={i}
-                className="item-tip-line"
-                style={style}
-                dangerouslySetInnerHTML={{ __html: wowTextToHtml(left) }}
-              />
-            );
-          })
-        : (
-          <>
-            <div className="item-tip-line">
-              {SLOT_LABEL[slot] || slot}
-              {e.item_level != null ? ` · 物品等级 ${e.item_level}` : ""}
-            </div>
-            {e.quality != null ? (
-              <div className="item-tip-line" style={{ color }}>
-                {QUALITY_LABEL[e.quality] || `品质 ${e.quality}`}
-              </div>
-            ) : null}
-            {e.desc ? (
-              <div
-                className="item-tip-line"
-                dangerouslySetInnerHTML={{ __html: wowTextToHtml(e.desc) }}
-              />
-            ) : null}
-            <div className="item-tip-line muted">
-              （请升级插件并重新快照以获取完整属性）
-            </div>
-          </>
-        )}
-      {e.item_id != null ? (
-        <div className="item-tip-id muted">物品ID {e.item_id}</div>
-      ) : null}
-      {tm ? (
-        <div
-          className="item-tip-tm"
-          dangerouslySetInnerHTML={{ __html: `外观：${wowTextToHtml(tm)}` }}
-        />
-      ) : null}
-    </div>
-  );
-}
-
 function SlotRow({
   slot,
   e,
@@ -161,13 +76,14 @@ function SlotRow({
   const empty = !e?.name && !e?.item_id;
   const border = qualityColor(e?.quality);
   const tm = transmogText(e?.transmog);
+  const tipHtml = useMemo(
+    () => (!empty && e ? buildEquipTipHtml(e, slot) : ""),
+    [empty, e, slot]
+  );
   const meta = (
     <div className="armory-meta">
       <div className="armory-slot">{SLOT_LABEL[slot] || slot}</div>
-      <div
-        className="armory-name"
-        style={{ color: empty ? undefined : border }}
-      >
+      <div className="armory-name" style={{ color: empty ? undefined : border }}>
         {empty ? "空" : e?.name || "-"}
         {e?.item_level != null ? (
           <span className="muted"> {e.item_level}</span>
@@ -178,7 +94,7 @@ function SlotRow({
     </div>
   );
   const icon = <SlotIcon e={e} />;
-  return (
+  const row = (
     <div
       className={
         "armory-item" +
@@ -200,9 +116,10 @@ function SlotRow({
           {meta}
         </>
       )}
-      {!empty && e ? <EquipTooltip slot={slot} e={e} /> : null}
     </div>
   );
+  if (empty || !tipHtml) return row;
+  return <RichTooltip html={tipHtml}>{row}</RichTooltip>;
 }
 
 export default function ArmoryEquip({
@@ -219,7 +136,7 @@ export default function ArmoryEquip({
   }
   const c = character || {};
   return (
-    <div className="paperdoll">
+    <Box className="paperdoll">
       <div className="armory-col">
         {ARMORY_LEFT.map((slot) => (
           <SlotRow key={slot} slot={slot} e={bySlot.get(slot)} side="left" />
@@ -233,9 +150,7 @@ export default function ArmoryEquip({
           <div className="paperdoll-info">
             <div className="paperdoll-name">
               {c.name || "角色"}
-              {c.realm ? (
-                <span className="muted"> - {c.realm}</span>
-              ) : null}
+              {c.realm ? <span className="muted"> - {c.realm}</span> : null}
             </div>
             <div className="muted">
               {[c.race, c.class, c.spec].filter(Boolean).join(" · ") || "—"}
@@ -248,12 +163,7 @@ export default function ArmoryEquip({
         </div>
         <div className="paperdoll-weapons">
           {ARMORY_WEAPONS.map((slot) => (
-            <SlotRow
-              key={slot}
-              slot={slot}
-              e={bySlot.get(slot)}
-              side="weapon"
-            />
+            <SlotRow key={slot} slot={slot} e={bySlot.get(slot)} side="weapon" />
           ))}
         </div>
       </div>
@@ -262,6 +172,6 @@ export default function ArmoryEquip({
           <SlotRow key={slot} slot={slot} e={bySlot.get(slot)} side="right" />
         ))}
       </div>
-    </div>
+    </Box>
   );
 }

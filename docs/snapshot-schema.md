@@ -64,7 +64,7 @@
     "rank_index": 0,
     "is_leader": true,
     "flavor": "forever",
-    "region_key": "PVP",
+    "region_key": "NORMAL",
     "realm_name": "示例服务器"
   },
   "equipment": [

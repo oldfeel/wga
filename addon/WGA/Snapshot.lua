@@ -488,11 +488,20 @@ local function itemBriefById(itemId)
     name = name or n
     quality = quality or q
   end
+  -- 方案里的装也尽量采 tip（未穿上时靠 itemID）
+  local tipLines = {}
+  local link
+  if type(itemId) == "number" then
+    link = ("item:%d"):format(itemId)
+  end
+  local tipOk, tipRes = pcall(collectTooltipLines, nil, link)
+  if tipOk and type(tipRes) == "table" then tipLines = tipRes end
   return {
     item_id = itemId,
     name = name,
     quality = quality,
     icon_file_id = iconFileId,
+    tooltip_lines = tipLines,
   }
 end
 
@@ -738,13 +747,12 @@ local function talentEntryMeta(configID, entryID, rank)
 end
 
 -- Forever：一棵 Camelot 树里通常有 3 个天赋页（Arms/Fury/…），用 group 区分
-local function collectActiveTalentDetails()
-  local out = { config_name = nil, tree_id = nil, tabs = {}, trees = {}, nodes = {} }
-  if not (C_Traits and C_ClassTalents and C_ClassTalents.GetActiveConfigID) then
+-- configID：主/副天赋各有独立 CamelotCombat config（见 GetCombatConfigIDForSpecGroup）
+local function collectTalentDetailsForConfig(configID)
+  local out = { config_id = configID, config_name = nil, tree_id = nil, tabs = {}, trees = {}, nodes = {} }
+  if not (configID and C_Traits) then
     return out
   end
-  local configID = C_ClassTalents.GetActiveConfigID()
-  if not configID then return out end
   local ok, configInfo = pcall(C_Traits.GetConfigInfo, configID)
   if not (ok and type(configInfo) == "table") then return out end
   out.config_name = configInfo.name
@@ -863,6 +871,30 @@ local function collectActiveTalentDetails()
   return out
 end
 
+local function resolveConfigIDForSpecGroup(groupIndex, isActive)
+  -- Forever 双天赋：每套 SpecGroup 对应独立 combat config
+  if C_SpecializationInfo and C_SpecializationInfo.GetCombatConfigIDForSpecGroup then
+    local ok, cid = pcall(C_SpecializationInfo.GetCombatConfigIDForSpecGroup, groupIndex)
+    if ok and type(cid) == "number" and cid > 0 then
+      return cid
+    end
+  end
+  if isActive and C_ClassTalents and C_ClassTalents.GetActiveConfigID then
+    local ok, cid = pcall(C_ClassTalents.GetActiveConfigID)
+    if ok and type(cid) == "number" and cid > 0 then
+      return cid
+    end
+  end
+  return nil
+end
+
+local function talentGroupHasTree(g)
+  if not g then return false end
+  if type(g.tabs) == "table" and #g.tabs > 0 then return true end
+  if type(g.nodes) == "table" and #g.nodes > 0 then return true end
+  return false
+end
+
 local function collectTalentGroups()
   local groups = {}
   local num = 1
@@ -885,7 +917,8 @@ local function collectTalentGroups()
     if ok and type(a) == "number" and a > 0 then active = a end
   end
 
-  local activeDetails = collectActiveTalentDetails()
+  WGADB = WGADB or {}
+  WGADB.talent_group_cache = WGADB.talent_group_cache or {}
 
   for i = 1, num do
     local label = (i == 1) and "主天赋" or "副天赋"
@@ -898,21 +931,53 @@ local function collectTalentGroups()
         end
       end
     end
+    local isActive = (i == active)
     local g = {
       index = i,
       name = label,
-      active = (i == active),
+      active = isActive,
       trees = {},
       tabs = {},
       nodes = {},
     }
-    if i == active then
-      g.config_name = activeDetails.config_name
-      g.tree_id = activeDetails.tree_id
-      g.trees = activeDetails.trees or {}
-      g.tabs = activeDetails.tabs or {}
-      g.nodes = activeDetails.nodes or {}
+
+    local configID = resolveConfigIDForSpecGroup(i, isActive)
+    if configID then
+      local details = collectTalentDetailsForConfig(configID)
+      g.config_id = configID
+      g.config_name = details.config_name
+      g.tree_id = details.tree_id
+      g.trees = details.trees or {}
+      g.tabs = details.tabs or {}
+      g.nodes = details.nodes or {}
     end
+
+    -- 读不到非当前套时，用上次成功采集的缓存，避免切换后另一套变空
+    if not talentGroupHasTree(g) then
+      local cached = WGADB.talent_group_cache[i]
+      if type(cached) == "table" and talentGroupHasTree(cached) then
+        g.config_id = cached.config_id or g.config_id
+        g.config_name = cached.config_name or g.config_name
+        g.tree_id = cached.tree_id or g.tree_id
+        g.trees = cached.trees or {}
+        g.tabs = cached.tabs or {}
+        g.nodes = cached.nodes or {}
+        g.from_cache = true
+      end
+    end
+
+    if talentGroupHasTree(g) then
+      WGADB.talent_group_cache[i] = {
+        config_id = g.config_id,
+        config_name = g.config_name,
+        tree_id = g.tree_id,
+        trees = g.trees,
+        tabs = g.tabs,
+        nodes = g.nodes,
+        name = g.name,
+      }
+    end
+
     groups[#groups + 1] = g
   end
   return groups
@@ -949,7 +1014,8 @@ local function collectTalents()
   }
 end
 
--- 公会 + 服务器层级（无限服二级用 PVP/PVE 等；读不出则 UNKNOWN）
+-- 公会 + 服务器层级（无限服二级 = 官方规则集码；读不出则 UNKNOWN，由桌面/Web 自选）
+-- 规则集码：NORMAL / PVP / RP / RP_PVP / HARDCORE / UNKNOWN
 local function detectFlavor()
   -- 本插件面向无限服；有官方工程 ID 时再细分
   if type(WOW_PROJECT_ID) == "number" then
@@ -972,26 +1038,42 @@ local function detectFlavor()
   return "forever"
 end
 
-local function detectRegionKey(flavor)
-  -- 无限服：尝试从 realm 名 / 自定义 API 推断 PVP/PVE
-  local realm = (GetRealmName and GetRealmName()) or ""
-  local upper = string.upper(tostring(realm))
+local function classifyRulesetBlob(blob)
+  local text = tostring(blob or "")
+  local upper = string.upper(text)
+  -- 先匹配更具体的组合，避免 RP-PvP 被拆成 RP 或 PVP
+  if string.find(upper, "RP_PVP", 1, true) or string.find(upper, "RP-PVP", 1, true)
+      or string.find(upper, "RPPVP", 1, true) or string.find(upper, "RP PVP", 1, true)
+      or string.find(text, "角色扮演PvP", 1, true) or string.find(text, "角色扮演 PvP", 1, true)
+      or string.find(text, "角色扮演PVP", 1, true) then
+    return "RP_PVP"
+  end
+  if string.find(upper, "HARDCORE", 1, true) or string.find(text, "专家模式", 1, true) then
+    return "HARDCORE"
+  end
   if string.find(upper, "PVP", 1, true) then
     return "PVP"
   end
-  if string.find(upper, "PVE", 1, true) then
-    return "PVE"
-  end
-  if string.find(upper, "RP", 1, true) then
+  if string.find(upper, "RP", 1, true) or string.find(text, "角色扮演", 1, true) then
     return "RP"
   end
-  -- 部分客户端可能有 GetRealmInfo / C_RealmInfo
+  if string.find(upper, "PVE", 1, true) or string.find(upper, "NORMAL", 1, true)
+      or string.find(text, "普通", 1, true) then
+    return "NORMAL"
+  end
+  return nil
+end
+
+local function detectRegionKey(flavor)
+  -- 无限服：尝试从 realm / GetRealmInfo 推断官方规则集；多数中文服名读不出 → UNKNOWN
+  local realm = (GetRealmName and GetRealmName()) or ""
+  local hit = classifyRulesetBlob(realm)
+  if hit then return hit end
   if type(GetRealmInfo) == "function" then
     local ok, a, b, c = pcall(GetRealmInfo)
     if ok then
-      local blob = string.upper(table.concat({ tostring(a or ""), tostring(b or ""), tostring(c or "") }, " "))
-      if string.find(blob, "PVP", 1, true) then return "PVP" end
-      if string.find(blob, "PVE", 1, true) then return "PVE" end
+      hit = classifyRulesetBlob(table.concat({ tostring(a or ""), tostring(b or ""), tostring(c or "") }, " "))
+      if hit then return hit end
     end
   end
   if flavor == "forever" then

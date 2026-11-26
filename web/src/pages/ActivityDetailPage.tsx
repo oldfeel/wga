@@ -70,7 +70,18 @@ export default function ActivityDetailPage() {
       },
     ];
     try {
-      await api.putRoster(auth.token, activityId!, next);
+      await api.putRoster(
+        auth.token,
+        activityId!,
+        next.map((r) => ({
+          character_id: r.character_id,
+          user_id: r.user_id,
+          group_name: r.group_name ?? undefined,
+          slot_role: r.slot_role ?? undefined,
+          sort_order: r.sort_order,
+          note: r.note ?? undefined,
+        }))
+      );
       setMsg("排表已保存");
       await load();
     } catch (ex) {

@@ -25,7 +25,7 @@ Base URL：`http://localhost:8080/api/v1`（生产由 Nginx 反代 `/api/`）
 | 字段 | 说明 |
 |------|------|
 | `flavor` | `forever` / `retail` / `classic` |
-| `region_key` | 正式/怀旧：大区；无限服：`PVP`/`PVE`/…；未知：`UNKNOWN` |
+| `region_key` | 正式/怀旧：大区；无限服规则集：`NORMAL`（普通）/`PVP`/`RP`/`RP_PVP`/`HARDCORE`（专家模式）；未知：`UNKNOWN`（创建/查询前须由用户选定） |
 | `realm_name` | 服务器名 |
 | `name` / `guild_name` | 公会名 |
 

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
+import { foreverRulesetLabel } from "@wga/ui";
 import { api } from "../api";
 import { useAuth } from "../auth";
 
@@ -61,7 +62,11 @@ export default function AdminGuildPage() {
           {guilds.map((g) => (
             <li key={g.id} className="act-row">
               <span style={{ flex: 1 }}>
-                {g.flavor}/{g.region_key}/{g.realm_name} · {g.name}
+                {g.flavor}/
+                {g.flavor === "forever"
+                  ? foreverRulesetLabel(g.region_key)
+                  : g.region_key}
+                /{g.realm_name} · {g.name}
                 {g.created_by ? ` · @${g.created_by}` : ""}
               </span>
               <button

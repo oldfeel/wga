@@ -11,7 +11,7 @@
 |----|------|
 | 账号体系 | 本地账号（用户名 + 密码）；不做 Discord / Battle.net OAuth（MVP） |
 | 进公会 | 按 `(flavor, region_key, realm_name, guild_name)` 查库：无则创建（待认证）、有则申请加入（会长/官员审）；游戏会长可认领（平台管理员审） |
-| 服务器层级 | 一级 flavor（forever/retail/classic）；二级 region_key（无限服用 PVP/PVE，未知 UNKNOWN）；三级 realm_name |
+| 服务器层级 | 一级 flavor（forever/retail/classic）；二级 region_key（无限服=官方规则集码 `NORMAL`/`PVP`/`RP`/`RP_PVP`/`HARDCORE`，读不出为 `UNKNOWN` 并由用户自选；正式/怀旧为大区）；三级 realm_name |
 | 认证 | 创建后 `pending`；平台管理员认证后显示「已认证」；认领通过默认同时认证 |
 | 角色 | `owner`（会长）/ `officer`（官员）/ `member`（成员）；另有平台 `is_admin`（`ADMIN_USERNAMES`） |
 | 一人多公会 | **允许**；请求需带当前 `guild_id` 上下文 |

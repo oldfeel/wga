@@ -401,7 +401,10 @@ fn latest_wga_lua(wow_root: &str) -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
-fn get_local_snapshot(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+fn get_local_snapshot(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
     let wow_root = state.cfg.lock().map_err(|e| e.to_string())?.wow_root.clone();
     eprintln!("[snap] get_local_snapshot wow_root={wow_root}");
     let path = latest_wga_lua(&wow_root).map_err(|e| {
@@ -428,18 +431,104 @@ fn get_local_snapshot(state: State<'_, AppState>) -> Result<serde_json::Value, S
                 .count()
         })
         .unwrap_or(0);
+    // tip HTML 体积大：IPC 约 94KB 时前端易卡住空白；列表只保留展示字段，tip 后续按需再取
+    let mut payload = parsed.payload;
+    slim_talent_payload(&mut payload);
+    slim_equip_tooltips(&mut payload);
+    let body = serde_json::json!({
+        "path": path.display().to_string(),
+        "hash": parsed.hash,
+        "payload": payload,
+    });
+    let bytes = body.to_string().len();
     eprintln!(
-        "[snap] ok path={} equip={} with_file_id={} hash={}",
+        "[snap] ok path={} equip={} with_file_id={} hash={} bytes={}",
         path.display(),
         equip_n,
         with_fid,
-        parsed.hash
+        parsed.hash,
+        bytes
     );
-    Ok(serde_json::json!({
-        "path": path.display().to_string(),
-        "hash": parsed.hash,
-        "payload": parsed.payload,
-    }))
+    let char_name = body
+        .pointer("/payload/character/name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    let set_n = body
+        .pointer("/payload/equipment_sets")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    emit_log(
+        &app,
+        "info",
+        &format!(
+            "Rust 快照就绪 char={char_name} equip={equip_n} sets={set_n} fileId={with_fid} bytes={bytes}"
+        ),
+    );
+    Ok(body)
+}
+
+fn slim_talent_nodes(nodes: Option<&mut Vec<serde_json::Value>>) {
+    let Some(nodes) = nodes else { return };
+    for n in nodes.iter_mut() {
+        if let Some(obj) = n.as_object_mut() {
+            obj.remove("tooltip_lines");
+            obj.remove("description");
+        }
+    }
+}
+
+fn slim_talent_payload(payload: &mut serde_json::Value) {
+    let Some(groups) = payload
+        .pointer_mut("/talents/groups")
+        .and_then(|v| v.as_array_mut())
+    else {
+        return;
+    };
+    for g in groups {
+        slim_talent_nodes(g.get_mut("nodes").and_then(|v| v.as_array_mut()));
+        if let Some(tabs) = g.get_mut("tabs").and_then(|v| v.as_array_mut()) {
+            for tab in tabs {
+                slim_talent_nodes(tab.get_mut("nodes").and_then(|v| v.as_array_mut()));
+                if let Some(trees) = tab.get_mut("trees").and_then(|v| v.as_array_mut()) {
+                    for tree in trees {
+                        slim_talent_nodes(tree.get_mut("nodes").and_then(|v| v.as_array_mut()));
+                    }
+                }
+            }
+        }
+        if let Some(trees) = g.get_mut("trees").and_then(|v| v.as_array_mut()) {
+            for tree in trees {
+                slim_talent_nodes(tree.get_mut("nodes").and_then(|v| v.as_array_mut()));
+            }
+        }
+    }
+}
+
+fn strip_item_tooltips(items: Option<&mut Vec<serde_json::Value>>) {
+    let Some(items) = items else { return };
+    for it in items.iter_mut() {
+        if let Some(obj) = it.as_object_mut() {
+            obj.remove("tooltip_lines");
+        }
+    }
+}
+
+fn slim_equip_tooltips(payload: &mut serde_json::Value) {
+    strip_item_tooltips(
+        payload
+            .get_mut("equipment")
+            .and_then(|v| v.as_array_mut()),
+    );
+    if let Some(sets) = payload
+        .get_mut("equipment_sets")
+        .and_then(|v| v.as_array_mut())
+    {
+        for set in sets {
+            strip_item_tooltips(set.get_mut("items").and_then(|v| v.as_array_mut()));
+            strip_item_tooltips(set.get_mut("equipment").and_then(|v| v.as_array_mut()));
+        }
+    }
 }
 
 /// 用物品 ID 向 Wowhead 解析图标文件名（桌面端绕过 CORS；无限新增物品可能没有）

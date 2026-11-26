@@ -1,0 +1,15 @@
+{
+  "name": "wga",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "web",
+    "desktop"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev -w wga-web",
+    "dev:desktop": "npm run tauri:dev -w wga-desktop",
+    "build:web": "npm run build -w wga-web",
+    "build:desktop": "npm run build -w wga-desktop"
+  }
+}

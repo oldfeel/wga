@@ -1,4 +1,9 @@
 import { useEffect, useState, type FormEvent } from "react";
+import {
+  FOREVER_RULESETS,
+  coerceForeverRegionKey,
+  foreverRulesetLabel,
+} from "@wga/ui";
 import { api } from "../api";
 import { useAuth } from "../auth";
 
@@ -99,10 +104,19 @@ export default function GuildPage() {
 
   async function doLookup(e: FormEvent) {
     e.preventDefault();
+    const fl = flavor.trim() || "forever";
+    const region =
+      fl === "forever"
+        ? coerceForeverRegionKey(regionKey)
+        : regionKey.trim() || "UNKNOWN";
+    if (fl === "forever" && region === "UNKNOWN") {
+      setMsg("请选择无限服规则集（普通 / PvP / 角色扮演…）");
+      return;
+    }
     try {
       const r = await api.lookupGuild(auth.token, {
-        flavor: flavor.trim() || "forever",
-        region_key: regionKey.trim() || "UNKNOWN",
+        flavor: fl,
+        region_key: region,
         realm_name: realmName.trim(),
         guild_name: guildName.trim(),
       });
@@ -139,7 +153,11 @@ export default function GuildPage() {
               >
                 {g.name} · {g.role} · {verifyBadge(g.verification_status)}
                 {g.realm_name
-                  ? ` · ${g.flavor}/${g.region_key}/${g.realm_name}`
+                  ? ` · ${g.flavor}/${
+                      g.flavor === "forever"
+                        ? foreverRulesetLabel(g.region_key)
+                        : g.region_key
+                    }/${g.realm_name}`
                   : ""}
               </button>
             </li>
@@ -150,26 +168,50 @@ export default function GuildPage() {
       <section className="card">
         <h2>按游戏公会查询</h2>
         <p className="muted">
-          填写与游戏一致的服务器层级与公会名（桌面端可从插件快照自动读取）。无限服二级填
-          PVP/PVE，未知可填 UNKNOWN。
+          填写与游戏一致的服务器层级与公会名（桌面端可从插件快照自动读取）。无限服二级为官方规则集：普通、PvP、角色扮演、角色扮演
+          PvP、专家模式。
         </p>
         <form className="stack-form" onSubmit={doLookup}>
           <label>
             客户端
-            <select value={flavor} onChange={(e) => setFlavor(e.target.value)}>
+            <select
+              value={flavor}
+              onChange={(e) => {
+                const next = e.target.value;
+                setFlavor(next);
+                if (next === "forever") {
+                  setRegionKey(coerceForeverRegionKey(regionKey));
+                }
+              }}
+            >
               <option value="forever">无限服</option>
               <option value="retail">正式服</option>
               <option value="classic">怀旧服</option>
             </select>
           </label>
           <label>
-            大区 / 类型
-            <input
-              value={regionKey}
-              onChange={(e) => setRegionKey(e.target.value)}
-              placeholder="PVP / PVE / 一区 / UNKNOWN"
-              required
-            />
+            {flavor === "forever" ? "规则集" : "大区 / 类型"}
+            {flavor === "forever" ? (
+              <select
+                value={coerceForeverRegionKey(regionKey)}
+                onChange={(e) => setRegionKey(e.target.value)}
+                required
+              >
+                {FOREVER_RULESETS.map((r) => (
+                  <option key={r.value} value={r.value}>
+                    {r.label}
+                    {r.value !== "UNKNOWN" ? ` (${r.value})` : ""}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                value={regionKey}
+                onChange={(e) => setRegionKey(e.target.value)}
+                placeholder="一区 / 二区 …"
+                required
+              />
+            )}
           </label>
           <label>
             服务器名
@@ -204,10 +246,19 @@ export default function GuildPage() {
                 type="button"
                 onClick={async () => {
                   try {
+                    const fl = flavor.trim() || "forever";
+                    const region =
+                      fl === "forever"
+                        ? coerceForeverRegionKey(regionKey)
+                        : regionKey.trim() || "UNKNOWN";
+                    if (fl === "forever" && region === "UNKNOWN") {
+                      setMsg("创建前请选择规则集");
+                      return;
+                    }
                     const g = await api.createGuild(auth.token, {
                       name: guildName.trim(),
-                      flavor: flavor.trim() || "forever",
-                      region_key: regionKey.trim() || "UNKNOWN",
+                      flavor: fl,
+                      region_key: region,
                       realm_name: realmName.trim(),
                     });
                     auth.setGuildId(g.id);
